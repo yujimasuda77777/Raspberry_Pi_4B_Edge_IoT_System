@@ -246,9 +246,124 @@ Retryは最大3回、Retry間隔は1秒→2秒→4秒、通信失敗データは
 
 ## 5. ユースケース
 
+### 5.1 ユースケース一覧
+
+本システムの主要なユースケースを以下に示す。
+
+|ID|ユースケース   |アクター|概要|
+|---|---|---|---|
+|UC-001|センサーデータ取得| Edge Application|DHT11から温度・湿度データを取得する|
+|UC-002|センサーデータ送信| Edge Application| 取得したセンサーデータをCloudflare Workerへ送信する|
+|UC-003|センサーデータ保存| Cloudflare Worker |受信したセンサーデータをCloudflare D1へ保存する|
+|UC-004|現在値参照|Browser|現在の温度・湿度を参照する|
+|UC-005|履歴データ参照|Browser|保存されたセンサーデータの履歴を参照する|
+|UC-006|グラフ表示|Browser|センサーデータを時系列グラフとして表示する|
+|UC-007|Edge Application起動| Raspberry Pi / systemd| Raspberry Pi起動後にEdge Applicationを起動する|
+|UC-008|Edge Application停止| Raspberry Pi / systemd| Edge Applicationを正常に停止する|
+|UC-009|障害復旧|Edge Application /systemd|センサー、通信、アプリケーションなどの異常から復旧する|
+
+### 5.2 ユースケース関係
+
+```mermaid
+flowchart LR
+    Sensor["DHT11"]
+
+    Edge["Edge Application"]
+    Systemd["systemd"]
+
+    Worker["Cloudflare Worker"]
+    D1["Cloudflare D1"]
+
+    Browser["Browser"]
+
+    Sensor -->|UC-001<br/>センサーデータ取得| Edge
+    Edge  -->|UC-002<br/>センサーデータ送信| Worker
+    Worker -->|UC-003<br/>センサーデータ保存|D1
+
+    Browser -->|UC-004<br/>現在値参照| Worker
+    Browser -->|UC-005<br/>履歴データ参照| Worker
+    Browser -->|UC-006<br/>グラフ表示| Worker
+    Systemd -->|UC-007<br/>Edge Application起動| Edge
+    Systemd -->|UC-008<br/>Edge Application停止| Edge
+    Edge --> |UC-009<br/>障害復旧| Edge
+    Systemd --> |UC-009<br/>障害復旧| Edge
 
 
- 
 
+```
 
+## 6.システムコンテキスト
 
+### 6.1 システム境界
+
+本システムの設計対象は、Raspberry Pi 4B上で動作するEdge Applicationを中心としたIoTシステムとする。
+
+システム外部とのインターフェースとして、DHT11、ネットワーク、Cloudflare Worker、Cloudflare D1、およびBrowserを扱う。
+
+Raspberry Pi 4B上のEdge Application内部のProcess、Thread、Queue、データ処理などの詳細構造は、後続の設計項目で定義する。
+
+### 6.2 外部要素
+
+| ID | 外部要素 | 種別 | システムとの関係 |
+|---|---|---|---|
+| EXT-001 | DHT11 | センサー | 温度・湿度データを提供する |
+| EXT-002 | Wi-Fi / Internet | ネットワーク | Raspberry PiとCloudflare間の通信経路を提供する |
+| EXT-003 | Cloudflare Worker | 外部システム | Raspberry Piからセンサーデータを受信する |
+| EXT-004 | Cloudflare D1 | 外部データストア | センサーデータを保存する |
+| EXT-005 | Browser | 利用者インターフェース | センサーデータを参照する |
+
+### 6.3 システムコンテキスト
+
+```mermaid
+flowchart LR
+    DHT11["DHT11<br/>温湿度センサー"]
+
+    subgraph IoT["IoTシステム"]
+        Edge["Raspberry Pi 4B<br/>Edge Application"]
+    end
+
+    Network["Wi-Fi / Internet"]
+    Worker["Cloudflare Worker"]
+    D1["Cloudflare D1"]
+    Browser["Browser"]
+
+    DHT11 -->|温度・湿度データ| Edge
+    Edge -->|センサーデータ送信| Network
+    Network --> Worker
+    Worker -->|データ保存| D1
+
+    Browser -->|データ参照要求| Worker
+    Worker -->|データ応答| Browser
+```
+
+### 6.4 外部要素とのデータフロー
+
+#### DHT11 → Edge Application
+
+DHT11は温度および湿度データをEdge Applicationへ提供する。
+
+#### Edge Application → Cloudflare Worker
+
+Edge Applicationは、DHT11から取得したセンサーデータをネットワーク経由でCloudflare Workerへ送信する。
+
+#### Cloudflare Worker → Cloudflare D1
+
+Cloudflare Workerは、受信したセンサーデータをCloudflare D1へ保存する。
+
+#### Browser → Cloudflare Worker
+
+BrowserはCloudflare Workerへセンサーデータの参照を要求する。
+
+#### Cloudflare Worker → Browser
+
+Cloudflare Workerは、Cloudflare D1に保存されたセンサーデータを取得し、Browserへ返却する。
+
+### 6.5 システム境界に関する方針
+
+本設計では、Raspberry Pi 4B上のEdge Applicationを主要な設計対象とする。
+
+Cloudflare WorkerおよびCloudflare D1は外部システムとして扱い、それらの内部実装は本設計の対象外とする。
+
+ただし、Edge Applicationとの通信に必要となるインターフェース、データ形式、通信条件および異常時の振る舞いについては、本システムの設計対象として扱う。
+
+Browserについても、画面内部の詳細な実装ではなく、センサーデータを参照するための外部インターフェースとして扱う。
