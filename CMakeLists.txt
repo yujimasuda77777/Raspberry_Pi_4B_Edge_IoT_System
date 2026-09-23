@@ -5,11 +5,14 @@ project(Raspberry_Pi_4B_Edge_IoT_System)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(CURL REQUIRED)
+
 add_executable(
     Raspberry_Pi_4B_Edge_IoT_System
 
     src/main.cpp
     src/sensor/Dht11Sensor.cpp
+    src/cloud/CloudflareClient.cpp
 )
 
 target_include_directories(
@@ -22,4 +25,5 @@ target_link_libraries(
     Raspberry_Pi_4B_Edge_IoT_System
     PRIVATE
     lgpio
+    CURL::libcurl
 )

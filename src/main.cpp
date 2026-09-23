@@ -1,64 +1,62 @@
-#include "sensor/Dht11Sensor.h"
+#include "cloud/CloudflareClient.h"
 
 #include <chrono>
 #include <iostream>
 #include <thread>
 
-/**
- * @brief アプリケーションエントリポイント
- */
 int main()
 {
     /*
-     * DHT11はRaspberry Piの
-     * BCM GPIO14へ接続されている。
+     * Cloudflare WorkerのURL
      */
-    Dht11Sensor sensor(14);
+    const std::string workerUrl =
+        "https://raspi-iot.yujimasuda77777.workers.dev/";
 
     /*
-     * センサ初期化
+     * Cloudflare通信クライアントを生成する。
      */
-    if (!sensor.initialize())
+    CloudflareClient cloudClient(
+        workerUrl);
+
+    /*
+     * Cloudflare通信を初期化する。
+     */
+    if (!cloudClient.initialize())
     {
         std::cerr
-            << "DHT11 initialize failed."
+            << "Cloudflare client initialize failed."
             << std::endl;
 
         return 1;
     }
 
     /*
-     * DHT11の読み取りを繰り返す。
+     * 今回はDHT11をまだ接続しない。
+     *
+     * Cloudflare通信確認用として
+     * 固定値を使用する。
      */
-    while (true)
+    const float temperature = 26.0f;
+    const float humidity = 62.0f;
+
+    /*
+     * Cloudflare Workerへデータを送信する。
+     */
+    if (cloudClient.sendSensorData(
+            temperature,
+            humidity))
     {
-        float temperature = 0.0f;
-        float humidity = 0.0f;
+        std::cout
+            << "Sensor data sent successfully."
+            << std::endl;
+    }
+    else
+    {
+        std::cerr
+            << "Sensor data send failed."
+            << std::endl;
 
-        if (sensor.read(temperature, humidity))
-        {
-            std::cout
-                << "Temperature: "
-                << temperature
-                << " C, Humidity: "
-                << humidity
-                << " %"
-                << std::endl;
-        }
-        else
-        {
-            std::cerr
-                << "DHT11 read failed. "
-                << "Retry after 3 seconds."
-                << std::endl;
-        }
-
-        /*
-         * DHT11は連続して読み取らず、
-         * 3秒間隔を空ける。
-         */
-        std::this_thread::sleep_for(
-            std::chrono::seconds(3));
+        return 1;
     }
 
     return 0;
