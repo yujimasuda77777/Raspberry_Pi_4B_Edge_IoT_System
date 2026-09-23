@@ -12,7 +12,7 @@ add_executable(
 
     src/main.cpp
     src/sensor/Dht11Sensor.cpp
-    src/cloud/CloudflareClient.cpp
+    src/communication/CloudflareClient.cpp
 )
 
 target_include_directories(
