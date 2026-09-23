@@ -42,7 +42,7 @@ public:
 
 private:
     /**
-     * @brief GPIOを出力モードで確保する
+     * @brief GPIOを出力として確保する
      *
      * @param initialValue 初期出力値
      *
@@ -52,12 +52,12 @@ private:
     bool configureOutput(int initialValue);
 
     /**
-     * @brief DHT11へ開始信号を送信する
+     * @brief GPIOを入力として確保する
      *
      * @return true  成功
      * @return false 失敗
      */
-    bool sendStartSignal();
+    bool configureInput();
 
     /**
      * @brief GPIOを解放する
@@ -65,7 +65,7 @@ private:
     void releaseGpio();
 
     /**
-     * @brief DHT11のパルスを取得して40ビットのデータを作成する
+     * @brief DHT11から生データ40bitを取得する
      *
      * @param data 取得した5バイトのデータ
      *
@@ -75,9 +75,9 @@ private:
     bool readRawData(std::uint8_t data[5]);
 
     /**
-     * @brief チェックサムを確認する
+     * @brief DHT11のチェックサムを確認する
      *
-     * @param data DHT11から取得した5バイトのデータ
+     * @param data DHT11から取得した5バイト
      *
      * @return true  正常
      * @return false 異常
@@ -85,6 +85,9 @@ private:
     bool checkChecksum(const std::uint8_t data[5]) const;
 
 private:
+    /**
+     * @brief BCM GPIO番号
+     */
     unsigned int m_gpioPin;
 
     /**
@@ -93,7 +96,7 @@ private:
     int m_gpioHandle;
 
     /**
-     * @brief GPIOを確保しているか
+     * @brief GPIOを現在確保しているか
      */
     bool m_gpioClaimed;
 };
