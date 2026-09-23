@@ -1,4 +1,4 @@
-#include "cloud/CloudflareClient.h"
+#include "communication/CloudflareClient.h"
 
 #include <curl/curl.h>
 
