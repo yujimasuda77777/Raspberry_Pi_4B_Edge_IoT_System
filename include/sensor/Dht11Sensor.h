@@ -20,7 +20,7 @@ class Dht11Sensor
 public:
     /**
      * @brief コンストラクタ
-     * @param gpioPin DHT11を接続するGPIO番号（BCM番号）
+     * @param gpioPin 使用するBCM GPIO番号
      */
     explicit Dht11Sensor(unsigned int gpioPin);
 
@@ -30,15 +30,15 @@ public:
     ~Dht11Sensor();
 
     /**
-     * @brief センサを初期化する
+     * @brief DHT11を初期化する
      * @return true: 成功 / false: 失敗
      */
     bool initialize();
 
     /**
-     * @brief 温度・湿度を取得する
-     * @param temperature 取得した温度[℃]
-     * @param humidity 取得した湿度[%]
+     * @brief DHT11から温湿度を取得する
+     * @param temperature 温度格納先
+     * @param humidity 湿度格納先
      * @return true: 成功 / false: 失敗
      */
     bool read(float& temperature, float& humidity);
@@ -52,7 +52,7 @@ private:
     bool configureOutput(int initialValue);
 
     /**
-     * @brief GPIOを入力＋両エッジ検出に設定する
+     * @brief GPIOを入力モードに設定する
      * @return true: 成功 / false: 失敗
      */
     bool configureInput();
@@ -64,32 +64,38 @@ private:
     bool sendStartSignal();
 
     /**
-     * @brief DHT11から40bitのデータを取得する
-     * @param data 取得した5バイトのデータ
+     * @brief DHT11から40bitの生データを取得する
+     * @param data 5バイトのデータ格納先
      * @return true: 成功 / false: 失敗
      */
     bool readRawData(std::uint8_t data[5]);
 
     /**
      * @brief チェックサムを確認する
-     * @param data DHT11から取得した5バイトのデータ
+     * @param data DHT11から取得した5バイトデータ
      * @return true: 正常 / false: 異常
      */
     bool checkChecksum(const std::uint8_t data[5]) const;
 
     /**
-     * @brief GPIOリクエストを解放する
+     * @brief GPIO要求を解放する
      */
     void releaseRequest();
 
 private:
-    /** DHT11を接続するGPIO番号（BCM番号） */
+    /**
+     * @brief BCM GPIO番号
+     */
     unsigned int m_gpioPin;
 
-    /** GPIOデバイス */
+    /**
+     * @brief GPIOチップ
+     */
     gpiod_chip* m_chip;
 
-    /** GPIOラインリクエスト */
+    /**
+     * @brief GPIOライン要求
+     */
     gpiod_line_request* m_request;
 };
 
