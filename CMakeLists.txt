@@ -17,5 +17,5 @@ target_include_directories(Raspberry_Pi_4B_Edge_IoT_System
 
 target_link_libraries(Raspberry_Pi_4B_Edge_IoT_System
     PRIVATE
-        gpiod
+        lgpio
 )

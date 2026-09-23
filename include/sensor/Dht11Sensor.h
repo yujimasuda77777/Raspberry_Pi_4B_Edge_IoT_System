@@ -8,9 +8,6 @@
 
 #include <cstdint>
 
-struct gpiod_chip;
-struct gpiod_line_request;
-
 /**
  * @class Dht11Sensor
  * @brief DHT11温湿度センサを制御するクラス
@@ -20,7 +17,7 @@ class Dht11Sensor
 public:
     /**
      * @brief コンストラクタ
-     * @param gpioPin 使用するBCM GPIO番号
+     * @param gpioPin BCM GPIO番号
      */
     explicit Dht11Sensor(unsigned int gpioPin);
 
@@ -37,50 +34,50 @@ public:
 
     /**
      * @brief DHT11から温湿度を取得する
-     * @param temperature 温度格納先
-     * @param humidity 湿度格納先
+     * @param temperature 温度
+     * @param humidity 湿度
      * @return true: 成功 / false: 失敗
      */
     bool read(float& temperature, float& humidity);
 
 private:
     /**
-     * @brief GPIOを出力モードに設定する
-     * @param initialValue 初期出力値
+     * @brief GPIOを出力として確保する
+     * @param initialValue 初期値
      * @return true: 成功 / false: 失敗
      */
-    bool configureOutput(int initialValue);
+    bool claimOutput(int initialValue);
 
     /**
-     * @brief GPIOを入力モードに設定する
+     * @brief GPIOを入力＋エッジ検出として確保する
      * @return true: 成功 / false: 失敗
      */
-    bool configureInput();
+    bool claimAlert();
 
     /**
-     * @brief DHT11へ開始信号を送信する
+     * @brief GPIOを解放する
+     */
+    void releaseGpio();
+
+    /**
+     * @brief DHT11開始信号を送信する
      * @return true: 成功 / false: 失敗
      */
     bool sendStartSignal();
 
     /**
-     * @brief DHT11から40bitの生データを取得する
-     * @param data 5バイトのデータ格納先
+     * @brief DHT11の40bitデータを取得する
+     * @param data 取得データ
      * @return true: 成功 / false: 失敗
      */
     bool readRawData(std::uint8_t data[5]);
 
     /**
      * @brief チェックサムを確認する
-     * @param data DHT11から取得した5バイトデータ
+     * @param data DHT11データ
      * @return true: 正常 / false: 異常
      */
     bool checkChecksum(const std::uint8_t data[5]) const;
-
-    /**
-     * @brief GPIO要求を解放する
-     */
-    void releaseRequest();
 
 private:
     /**
@@ -89,14 +86,26 @@ private:
     unsigned int m_gpioPin;
 
     /**
-     * @brief GPIOチップ
+     * @brief lgpio GPIOチップハンドル
      */
-    gpiod_chip* m_chip;
+    int m_gpioHandle;
 
     /**
-     * @brief GPIOライン要求
+     * @brief GPIO確保状態
      */
-    gpiod_line_request* m_request;
+    bool m_gpioClaimed;
+
+    /**
+     * @brief エッジ検出を有効にしているか
+     */
+    bool m_alertClaimed;
+
+    /**
+     * @brief エッジ通知を受け取るための内部データ
+     */
+    struct AlertContext;
+
+    AlertContext* m_alertContext;
 };
 
 #endif // DHT11_SENSOR_H
