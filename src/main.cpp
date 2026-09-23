@@ -1,26 +1,8 @@
-/**
- * @file main.cpp
- * @brief Raspberry Pi 4B Edge IoT System メイン処理
- */
-
 #include "sensor/Dht11Sensor.h"
 
 #include <chrono>
-#include <cstdio>
+#include <iostream>
 #include <thread>
-
-namespace
-{
-/**
- * @brief DHT11を接続しているBCM GPIO
- */
-constexpr unsigned int DHT11_GPIO = 14;
-
-/**
- * @brief 読み取り失敗時の再試行間隔
- */
-constexpr int RETRY_INTERVAL_SEC = 3;
-}
 
 /**
  * @brief アプリケーションエントリポイント
@@ -28,57 +10,55 @@ constexpr int RETRY_INTERVAL_SEC = 3;
 int main()
 {
     /*
-     * DHT11センサ生成。
+     * DHT11はRaspberry Piの
+     * BCM GPIO14へ接続されている。
      */
-    Dht11Sensor sensor(DHT11_GPIO);
+    Dht11Sensor sensor(14);
 
     /*
-     * 初期化。
+     * センサ初期化
      */
     if (!sensor.initialize())
     {
-        std::printf(
-            "DHT11 initialize failed.\n");
+        std::cerr
+            << "DHT11 initialize failed."
+            << std::endl;
 
         return 1;
     }
 
     /*
-     * DHT11読み取りを繰り返す。
+     * DHT11の読み取りを繰り返す。
      */
     while (true)
     {
-        float temperature = 0.0F;
-        float humidity = 0.0F;
+        float temperature = 0.0f;
+        float humidity = 0.0f;
 
-        /*
-         * 温湿度取得。
-         */
-        if (sensor.read(
-                temperature,
-                humidity))
+        if (sensor.read(temperature, humidity))
         {
-            std::printf(
-                "Temperature: %.1f C, "
-                "Humidity: %.1f %%\n",
-                temperature,
-                humidity);
-
-            return 0;
+            std::cout
+                << "Temperature: "
+                << temperature
+                << " C, Humidity: "
+                << humidity
+                << " %"
+                << std::endl;
+        }
+        else
+        {
+            std::cerr
+                << "DHT11 read failed. "
+                << "Retry after 3 seconds."
+                << std::endl;
         }
 
         /*
-         * 読み取り失敗。
-         */
-        std::printf(
-            "DHT11 read failed.\n");
-
-        /*
-         * DHT11は連続して読みすぎない。
+         * DHT11は連続して読み取らず、
+         * 3秒間隔を空ける。
          */
         std::this_thread::sleep_for(
-            std::chrono::seconds(
-                RETRY_INTERVAL_SEC));
+            std::chrono::seconds(3));
     }
 
     return 0;
