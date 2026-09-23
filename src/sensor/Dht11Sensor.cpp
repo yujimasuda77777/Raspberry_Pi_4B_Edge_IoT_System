@@ -14,24 +14,24 @@
 #include <thread>
 
 /**
- * @brief GPIOデバイス
+ * @brief GPIO関連定数
  */
 namespace
 {
 constexpr char GPIO_CHIP[] = "/dev/gpiochip0";
 
 /**
- * @brief DHT11のスタート信号LOW時間[ms]
+ * @brief DHT11開始信号のLOW時間[ms]
  */
 constexpr unsigned int START_LOW_TIME_MS = 20;
 
 /**
- * @brief GPIOイベント待ちタイムアウト[ms]
+ * @brief GPIOエッジイベント待ち時間[ns]
  */
-constexpr std::int64_t EDGE_TIMEOUT_NS = 5'000'000;
+constexpr std::int64_t EDGE_TIMEOUT_NS = 10'000'000;
 
 /**
- * @brief DHT11の40bitデータ数
+ * @brief DHT11のデータビット数
  */
 constexpr std::size_t DHT11_BIT_COUNT = 40;
 
@@ -41,22 +41,32 @@ constexpr std::size_t DHT11_BIT_COUNT = 40;
 constexpr std::size_t DHT11_BYTE_COUNT = 5;
 
 /**
- * @brief 0/1判定用のパルス幅境界[us]
+ * @brief 0/1判定境界[ns]
  *
- * DHT11では、
- *   0：約26～28us
- *   1：約70us
+ * DHT11のHIGH時間は、
+ * 0：約26～28us
+ * 1：約70us
  *
- * となるため、中間値として50usを使用する。
+ * のため、中間値として50usを使用する。
  */
 constexpr std::uint64_t BIT_THRESHOLD_NS = 50'000;
 
 /**
- * @brief DHT11の応答エッジ数
- *
- * DHT11の応答開始から40bit分の通信を取得する。
+ * @brief 1回のイベント読み出しバッファサイズ
  */
-constexpr std::size_t MAX_EDGE_EVENTS = 100;
+constexpr std::size_t EDGE_EVENT_BUFFER_SIZE = 16;
+
+/**
+ * @brief DHT11応答部分として無視するエッジ数
+ *
+ * DHT11はデータ40bitの前に、
+ * LOW約80us
+ * HIGH約80us
+ * の応答を返す。
+ *
+ * 最初の2エッジを応答として無視する。
+ */
+constexpr std::size_t RESPONSE_EDGE_COUNT = 2;
 }
 
 /**
@@ -134,7 +144,8 @@ bool Dht11Sensor::configureOutput(int initialValue)
 {
     releaseRequest();
 
-    gpiod_line_settings* settings = gpiod_line_settings_new();
+    gpiod_line_settings* settings =
+        gpiod_line_settings_new();
 
     if (settings == nullptr)
     {
@@ -158,32 +169,28 @@ bool Dht11Sensor::configureOutput(int initialValue)
             ? GPIOD_LINE_VALUE_ACTIVE
             : GPIOD_LINE_VALUE_INACTIVE);
 
-    gpiod_line_config* lineConfig = gpiod_line_config_new();
+    gpiod_line_config* lineConfig =
+        gpiod_line_config_new();
 
     if (lineConfig == nullptr)
     {
         gpiod_line_settings_free(settings);
 
-        std::cerr << "Failed to create GPIO line config."
-                  << std::endl;
-
         return false;
     }
 
-    int result = gpiod_line_config_add_line_settings(
-        lineConfig,
-        &m_gpioPin,
-        1,
-        settings);
+    int result =
+        gpiod_line_config_add_line_settings(
+            lineConfig,
+            &m_gpioPin,
+            1,
+            settings);
 
     gpiod_line_settings_free(settings);
 
     if (result < 0)
     {
         gpiod_line_config_free(lineConfig);
-
-        std::cerr << "Failed to add GPIO line settings."
-                  << std::endl;
 
         return false;
     }
@@ -195,9 +202,6 @@ bool Dht11Sensor::configureOutput(int initialValue)
     {
         gpiod_line_config_free(lineConfig);
 
-        std::cerr << "Failed to create GPIO request config."
-                  << std::endl;
-
         return false;
     }
 
@@ -205,10 +209,11 @@ bool Dht11Sensor::configureOutput(int initialValue)
         requestConfig,
         "dht11-sensor");
 
-    m_request = gpiod_chip_request_lines(
-        m_chip,
-        requestConfig,
-        lineConfig);
+    m_request =
+        gpiod_chip_request_lines(
+            m_chip,
+            requestConfig,
+            lineConfig);
 
     gpiod_request_config_free(requestConfig);
     gpiod_line_config_free(lineConfig);
@@ -235,7 +240,8 @@ bool Dht11Sensor::configureInput()
         return false;
     }
 
-    gpiod_line_settings* settings = gpiod_line_settings_new();
+    gpiod_line_settings* settings =
+        gpiod_line_settings_new();
 
     if (settings == nullptr)
     {
@@ -254,31 +260,44 @@ bool Dht11Sensor::configureInput()
         settings,
         GPIOD_LINE_CLOCK_MONOTONIC);
 
-    gpiod_line_config* lineConfig = gpiod_line_config_new();
+    /*
+     * 外部プルアップがない場合に備えて
+     * GPIO内部プルアップも有効にする。
+     */
+    gpiod_line_settings_set_bias(
+        settings,
+        GPIOD_LINE_BIAS_PULL_UP);
+
+    gpiod_line_config* lineConfig =
+        gpiod_line_config_new();
 
     if (lineConfig == nullptr)
     {
         gpiod_line_settings_free(settings);
+
         return false;
     }
 
-    int result = gpiod_line_config_add_line_settings(
-        lineConfig,
-        &m_gpioPin,
-        1,
-        settings);
+    int result =
+        gpiod_line_config_add_line_settings(
+            lineConfig,
+            &m_gpioPin,
+            1,
+            settings);
 
     gpiod_line_settings_free(settings);
 
     if (result < 0)
     {
         gpiod_line_config_free(lineConfig);
+
         return false;
     }
 
-    result = gpiod_line_request_reconfigure_lines(
-        m_request,
-        lineConfig);
+    result =
+        gpiod_line_request_reconfigure_lines(
+            m_request,
+            lineConfig);
 
     gpiod_line_config_free(lineConfig);
 
@@ -305,12 +324,16 @@ bool Dht11Sensor::sendStartSignal()
     }
 
     /*
-     * DHT11の開始信号：
+     * DHT11開始信号。
      *
-     * 1. ホスト側がLOWにする
-     * 2. 18ms以上保持する
-     * 3. HIGHへ戻す
-     * 4. DHT11が応答する
+     * Raspberry Pi側：
+     *   HIGH
+     *      ↓
+     *   LOW 約20ms
+     *      ↓
+     *   HIGH
+     *      ↓
+     *   入力へ切り替え
      */
     if (gpiod_line_request_set_value(
             m_request,
@@ -321,7 +344,8 @@ bool Dht11Sensor::sendStartSignal()
     }
 
     std::this_thread::sleep_for(
-        std::chrono::milliseconds(START_LOW_TIME_MS));
+        std::chrono::milliseconds(
+            START_LOW_TIME_MS));
 
     if (gpiod_line_request_set_value(
             m_request,
@@ -332,7 +356,7 @@ bool Dht11Sensor::sendStartSignal()
     }
 
     /*
-     * HIGHへ戻した直後に入力へ切り替える。
+     * DHT11の応答を受けるため入力へ切り替える。
      */
     if (!configureInput())
     {
@@ -347,7 +371,8 @@ bool Dht11Sensor::sendStartSignal()
  * @param data 取得した5バイトのデータ
  * @return true: 成功 / false: 失敗
  */
-bool Dht11Sensor::readRawData(std::uint8_t data[5])
+bool Dht11Sensor::readRawData(
+    std::uint8_t data[5])
 {
     std::memset(
         data,
@@ -360,7 +385,8 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
     }
 
     gpiod_edge_event_buffer* buffer =
-        gpiod_edge_event_buffer_new(MAX_EDGE_EVENTS);
+        gpiod_edge_event_buffer_new(
+            EDGE_EVENT_BUFFER_SIZE);
 
     if (buffer == nullptr)
     {
@@ -370,119 +396,144 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    /*
-     * DHT11の応答開始からデータ取得完了まで待つ。
-     */
-    int waitResult = gpiod_line_request_wait_edge_events(
-        m_request,
-        EDGE_TIMEOUT_NS);
+    std::size_t edgeCount = 0;
 
-    if (waitResult <= 0)
-    {
-        gpiod_edge_event_buffer_free(buffer);
+    std::uint64_t previousRisingTimestamp = 0;
 
-        std::cerr << "DHT11 edge event timeout."
-                  << std::endl;
-
-        return false;
-    }
-
-    int eventCount = gpiod_line_request_read_edge_events(
-        m_request,
-        buffer,
-        MAX_EDGE_EVENTS);
-
-    if (eventCount < 0)
-    {
-        gpiod_edge_event_buffer_free(buffer);
-
-        std::cerr << "Failed to read DHT11 edge events."
-                  << std::endl;
-
-        return false;
-    }
-
-    /*
-     * DHT11の通信では、
-     *
-     *   50us LOW
-     *   + HIGH幅
-     *
-     * のHIGH幅で0/1を判定する。
-     *
-     * 40bit分のHIGHパルスを探す。
-     */
-    std::uint64_t previousTimestamp = 0;
-    bool havePreviousTimestamp = false;
+    bool haveRisingTimestamp = false;
 
     std::size_t bitIndex = 0;
 
-    for (int i = 0; i < eventCount; ++i)
+    /*
+     * DHT11通信全体を受信するまで
+     * 複数回に分けてエッジイベントを読み取る。
+     */
+    while (bitIndex < DHT11_BIT_COUNT)
     {
-        gpiod_edge_event* event =
-            gpiod_edge_event_buffer_get_event(
+        int waitResult =
+            gpiod_line_request_wait_edge_events(
+                m_request,
+                EDGE_TIMEOUT_NS);
+
+        if (waitResult <= 0)
+        {
+            std::cerr
+                << "DHT11 edge event timeout."
+                << std::endl;
+
+            gpiod_edge_event_buffer_free(buffer);
+
+            return false;
+        }
+
+        int eventCount =
+            gpiod_line_request_read_edge_events(
+                m_request,
                 buffer,
-                i);
+                EDGE_EVENT_BUFFER_SIZE);
 
-        if (event == nullptr)
+        if (eventCount < 0)
         {
-            continue;
+            std::cerr
+                << "Failed to read DHT11 edge events."
+                << std::endl;
+
+            gpiod_edge_event_buffer_free(buffer);
+
+            return false;
         }
 
-        const auto eventType =
-            gpiod_edge_event_get_event_type(event);
-
-        const std::uint64_t timestamp =
-            gpiod_edge_event_get_timestamp_ns(event);
-
-        /*
-         * HIGHになった時刻を記録する。
-         */
-        if (eventType == GPIOD_EDGE_EVENT_RISING_EDGE)
+        for (int i = 0;
+             i < eventCount;
+             ++i)
         {
-            previousTimestamp = timestamp;
-            havePreviousTimestamp = true;
-        }
-        /*
-         * LOWになった時点でHIGH時間を計算する。
-         */
-        else if (eventType == GPIOD_EDGE_EVENT_FALLING_EDGE &&
-                 havePreviousTimestamp)
-        {
-            const std::uint64_t highTime =
-                timestamp - previousTimestamp;
+            gpiod_edge_event* event =
+                gpiod_edge_event_buffer_get_event(
+                    buffer,
+                    i);
 
-            /*
-             * 最初の80us程度の応答HIGHなどを除外し、
-             * DHT11のデータビットとして扱う。
-             *
-             * 40bitを超えたら終了。
-             */
-            if (highTime > 10'000 &&
-                highTime < 100'000)
+            if (event == nullptr)
             {
-                const bool bitValue =
-                    highTime >= BIT_THRESHOLD_NS;
-
-                const std::size_t byteIndex =
-                    bitIndex / 8;
-
-                data[byteIndex] <<= 1;
-
-                if (bitValue)
-                {
-                    data[byteIndex] |= 1;
-                }
-
-                ++bitIndex;
-
-                if (bitIndex >= DHT11_BIT_COUNT)
-                {
-                    break;
-                }
+                continue;
             }
 
-            havePreviousTimestamp = false;
+            const auto eventType =
+                gpiod_edge_event_get_event_type(
+                    event);
+
+            const std::uint64_t timestamp =
+                gpiod_edge_event_get_timestamp_ns(
+                    event);
+
+            ++edgeCount;
+
+            /*
+             * 最初の2エッジは
+             * DHT11の応答信号なので無視する。
+             */
+            if (edgeCount <= RESPONSE_EDGE_COUNT)
+            {
+                continue;
+            }
+
+            /*
+             * HIGHになった時刻を保存。
+             */
+            if (eventType ==
+                GPIOD_EDGE_EVENT_RISING_EDGE)
+            {
+                previousRisingTimestamp =
+                    timestamp;
+
+                haveRisingTimestamp = true;
+            }
+            /*
+             * LOWになった時点で、
+             * HIGHだった時間を計算する。
+             */
+            else if (
+                eventType ==
+                    GPIOD_EDGE_EVENT_FALLING_EDGE &&
+                haveRisingTimestamp)
+            {
+                const std::uint64_t highTime =
+                    timestamp -
+                    previousRisingTimestamp;
+
+                /*
+                 * DHT11のHIGH期間。
+                 *
+                 * 0：約26～28us
+                 * 1：約70us
+                 */
+                if (highTime >= 10'000 &&
+                    highTime <= 100'000)
+                {
+                    const bool bitValue =
+                        highTime >=
+                        BIT_THRESHOLD_NS;
+
+                    const std::size_t byteIndex =
+                        bitIndex / 8;
+
+                    data[byteIndex] <<= 1;
+
+                    if (bitValue)
+                    {
+                        data[byteIndex] |= 1;
+                    }
+
+                    ++bitIndex;
+
+                    if (bitIndex >=
+                        DHT11_BIT_COUNT)
+                    {
+                        break;
+                    }
+                }
+
+                haveRisingTimestamp = false;
+            }
         }
     }
 
@@ -490,9 +541,10 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
 
     if (bitIndex != DHT11_BIT_COUNT)
     {
-        std::cerr << "Invalid DHT11 bit count: "
-                  << bitIndex
-                  << std::endl;
+        std::cerr
+            << "Invalid DHT11 bit count: "
+            << bitIndex
+            << std::endl;
 
         return false;
     }
@@ -537,19 +589,34 @@ bool Dht11Sensor::read(
 
     if (!checkChecksum(data))
     {
-        std::cerr << "DHT11 checksum error."
-                  << std::endl;
+        std::cerr
+            << "DHT11 checksum error."
+            << std::endl;
+
+        std::cerr
+            << "Raw data: "
+            << static_cast<int>(data[0])
+            << ", "
+            << static_cast<int>(data[1])
+            << ", "
+            << static_cast<int>(data[2])
+            << ", "
+            << static_cast<int>(data[3])
+            << ", "
+            << static_cast<int>(data[4])
+            << std::endl;
 
         return false;
     }
 
     /*
-     * DHT11は整数部＋小数部で温湿度を表す。
+     * DHT11データ形式
      *
      * data[0] : 湿度整数部
      * data[1] : 湿度小数部
      * data[2] : 温度整数部
      * data[3] : 温度小数部
+     * data[4] : チェックサム
      */
     humidity =
         static_cast<float>(data[0]) +
@@ -559,15 +626,13 @@ bool Dht11Sensor::read(
         static_cast<float>(data[2]) +
         static_cast<float>(data[3]) / 10.0f;
 
-    /*
-     * 今回はDHT11なので符号ビットは通常使用しない。
-     */
     if (temperature < -40.0f ||
         temperature > 80.0f)
     {
-        std::cerr << "Invalid temperature: "
-                  << temperature
-                  << std::endl;
+        std::cerr
+            << "Invalid temperature: "
+            << temperature
+            << std::endl;
 
         return false;
     }
@@ -575,9 +640,10 @@ bool Dht11Sensor::read(
     if (humidity < 0.0f ||
         humidity > 100.0f)
     {
-        std::cerr << "Invalid humidity: "
-                  << humidity
-                  << std::endl;
+        std::cerr
+            << "Invalid humidity: "
+            << humidity
+            << std::endl;
 
         return false;
     }
