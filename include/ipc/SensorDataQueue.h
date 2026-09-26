@@ -8,36 +8,77 @@
 #include <mutex>
 #include <queue>
 
-
+/**
+ * @brief センサデータをThread間で受け渡すQueue
+ *
+ * Sensor ThreadがSensorDataを投入し、
+ * Communication ThreadがSensorDataを取得する。
+ */
 class SensorDataQueue
 {
-
 public:
-    explicit SensorDataQueue(std::sizet maxSize)
-        : m_maxSize(maxSize)
-    {
+    /**
+     * @brief コンストラクタ
+     *
+     * @param maxSize Queueの最大保持数
+     */
+    explicit SensorDataQueue(std::size_t maxSize);
 
-    }
+    /**
+     * @brief デストラクタ
+     */
+    ~SensorDataQueue();
 
-    ~SensorDataQueue() = default;
+    /**
+     * @brief センサデータをQueueへ投入する
+     *
+     * @param data 投入するセンサデータ
+     *
+     * @return true 投入成功
+     * @return false Queueが満杯
+     */
+    bool push(const SensorData& data);
 
-    bool push(const common::SensorData& data);
+    /**
+     * @brief Queueからセンサデータを取得する
+     *
+     * Queueが空の場合は、
+     * データが投入されるまで待機する。
+     *
+     * @param data 取得したセンサデータ
+     *
+     * @return true 取得成功
+     * @return false 取得失敗
+     */
+    bool waitAndPop(SensorData& data);
 
-
-    bool waitAndPop(common::SensorData& data);
-
-    std::size_t sise() const;
+    /**
+     * @brief 現在のQueue保持数を取得する
+     *
+     * @return Queueに保持されているデータ数
+     */
+    std::size_t size() const;
 
 private:
+    /**
+     * @brief Queue本体
+     */
+    std::queue<SensorData> m_queue;
 
-    std:queue<common::SensorData> m_queue;
-
+    /**
+     * @brief Queueへのアクセスを保護するmutex
+     */
     mutable std::mutex m_mutex;
 
-    std::condtion_variable m_confitionVariable;
+    /**
+     * @brief データ投入を通知するcondition_variable
+     */
+    std::condition_variable m_conditionVariable;
 
-    std::size_t m_maxsize;
-
+    /**
+     * @brief Queueの最大保持数
+     */
+    std::size_t m_maxSize;
 };
 
 #endif
