@@ -14,57 +14,61 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(CURL REQUIRED)
 
 #
-# 実行ファイルを作成する。
+# Sensor Process
 #
 add_executable(
-    Raspberry_Pi_4B_Edge_IoT_System
+    sensor-process
 
-    #
-    # メイン処理
-    #
-    src/main.cpp
-
-    #
-    # センサ処理
-    #
+    src/sensor/main.cpp
     src/sensor/Dht11Sensor.cpp
-
-    #
-    # Cloudflare通信処理
-    #
-    src/communication/CloudflareClient.cpp
-
-    #
-    # Thread間データ受け渡し
-    #
-    src/ipc/SensorDataQueue.cpp
-
-    #
-    # Sensor Thread
-    #
-    src/task/SensorTask.cpp
-
-    #
-    # Communication Thread
-    #
-    src/task/CommunicationTask.cpp
+    src/ipc/SensorDataMessageQueue.cpp
 )
 
 #
-# ヘッダファイルの検索先を設定する。
+# Sensor Processのヘッダ検索先
 #
 target_include_directories(
-    Raspberry_Pi_4B_Edge_IoT_System
+    sensor-process
     PRIVATE
     include
 )
 
 #
-# 使用するライブラリをリンクする。
+# Sensor Processで使用するライブラリ
 #
 target_link_libraries(
-    Raspberry_Pi_4B_Edge_IoT_System
+    sensor-process
     PRIVATE
     lgpio
+    rt
+)
+
+#
+# Communication Process
+#
+add_executable(
+    communication-process
+
+    src/communication/main.cpp
+    src/communication/CloudflareClient.cpp
+    src/ipc/SensorDataMessageQueue.cpp
+)
+
+#
+# Communication Processのヘッダ検索先
+#
+target_include_directories(
+    communication-process
+    PRIVATE
+    include
+)
+
+#
+# Communication Processで使用するライブラリ
+#
+target_link_libraries(
+    communication-process
+    PRIVATE
     CURL::libcurl
+    rt
 )

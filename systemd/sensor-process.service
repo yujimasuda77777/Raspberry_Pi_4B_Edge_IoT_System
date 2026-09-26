@@ -1,0 +1,25 @@
+[Unit]
+Description=Raspberry Pi 4B Edge IoT Sensor Process
+After=local-fs.target
+
+[Service]
+Type=simple
+
+User=edgeiot
+Group=edgeiot
+SupplementaryGroups=gpio
+
+WorkingDirectory=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System
+
+ExecStart=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System/build/sensor-process
+
+Restart=on-failure
+RestartSec=5s
+
+TimeoutStopSec=10s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

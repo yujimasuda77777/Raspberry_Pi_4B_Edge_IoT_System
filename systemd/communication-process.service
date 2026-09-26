@@ -1,0 +1,27 @@
+[Unit]
+Description=Raspberry Pi 4B Edge IoT Communication Process
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+User=edgeiot
+Group=edgeiot
+
+EnvironmentFile=/etc/raspberry-pi-edge-iot/communication.env
+
+WorkingDirectory=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System
+
+ExecStart=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System/build/communication-process
+
+Restart=on-failure
+RestartSec=5s
+
+TimeoutStopSec=15s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

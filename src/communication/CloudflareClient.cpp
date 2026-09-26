@@ -2,22 +2,19 @@
 
 #include <curl/curl.h>
 
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 
 /**
- * @brief HTTPレスポンスを受け取るコールバック関数
- *
- * libcurlがサーバーから受信したデータを
- * std::stringへ格納する。
- *
- * @param contents 受信データ
- * @param size データサイズ
- * @param nmemb データ数
- * @param userData 格納先
- *
- * @return 処理したデータサイズ
+ * @brief Shared Secretを送信するHTTP Header名
+ */
+const std::string SHARED_SECRET_HEADER_NAME =
+    "X-Edge-IoT-Shared-Secret";
+
+/**
+ * @brief HTTPレスポンス受信Callback
  */
 static size_t writeCallback(
     char* contents,
@@ -25,24 +22,30 @@ static size_t writeCallback(
     size_t nmemb,
     void* userData)
 {
-    const size_t totalSize = size * nmemb;
+    const size_t totalSize =
+        size * nmemb;
 
     std::string* response =
         static_cast<std::string*>(userData);
 
-    response->append(contents, totalSize);
+    response->append(
+        contents,
+        totalSize);
 
     return totalSize;
 }
 
 /**
  * @brief コンストラクタ
- *
- * @param workerUrl Cloudflare WorkerのURL
  */
-CloudflareClient::CloudflareClient(const std::string& workerUrl)
+CloudflareClient::CloudflareClient(
+    const std::string& workerUrl,
+    const std::string& sharedSecret)
     : m_workerUrl(workerUrl),
-      m_initialized(false)
+      m_sharedSecret(sharedSecret),
+      m_initialized(false),
+      m_lastHttpStatusCode(0),
+      m_retryableError(false)
 {
 }
 
@@ -55,13 +58,30 @@ CloudflareClient::~CloudflareClient()
 
 /**
  * @brief HTTP通信機能を初期化する
- *
- * @return true 初期化成功
- * @return false 初期化失敗
  */
 bool CloudflareClient::initialize()
 {
-    CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (m_workerUrl.empty())
+    {
+        std::cerr
+            << "Cloudflare Worker URL is empty."
+            << std::endl;
+
+        return false;
+    }
+
+    if (m_sharedSecret.empty())
+    {
+        std::cerr
+            << "Cloudflare Shared Secret is empty."
+            << std::endl;
+
+        return false;
+    }
+
+    const CURLcode result =
+        curl_global_init(
+            CURL_GLOBAL_DEFAULT);
 
     if (result != CURLE_OK)
     {
@@ -83,50 +103,55 @@ bool CloudflareClient::initialize()
 }
 
 /**
- * @brief 温度・湿度をCloudflare Workerへ送信する
- *
- * @param temperature 温度[℃]
- * @param humidity 湿度[%]
- *
- * @return true 送信成功
- * @return false 送信失敗
+ * @brief SensorDataをCloudflare Workerへ送信する
  */
-bool CloudflareClient::sendSensorData(float temperature, float humidity)
+bool CloudflareClient::sendSensorData(
+    const SensorData& data)
 {
+    m_lastHttpStatusCode = 0;
+    m_retryableError = false;
+
     if (!m_initialized)
     {
         std::cerr
             << "Cloudflare client is not initialized."
             << std::endl;
 
+        m_retryableError = true;
+
         return false;
     }
 
-    /*
-     * JSONデータを作成する。
-     *
-     * 今回はJSONライブラリを追加せず、
-     * std::ostringstreamで必要最小限のJSONを作成する。
-     */
     std::ostringstream jsonStream;
 
     jsonStream
+        << std::fixed
+        << std::setprecision(1)
         << "{"
+        << "\"data_id\":"
+        << data.data_id
+        << ","
         << "\"temperature\":"
-        << temperature
+        << data.temperature
         << ","
         << "\"humidity\":"
-        << humidity
+        << data.humidity
+        << ","
+        << "\"timestamp\":"
+        << data.timestamp
         << "}";
 
-    const std::string jsonData = jsonStream.str();
+    const std::string jsonData =
+        jsonStream.str();
 
     std::cout
-        << "POST data: "
-        << jsonData
+        << "HTTP POST. "
+        << "data_id="
+        << data.data_id
         << std::endl;
 
-    CURL* curl = curl_easy_init();
+    CURL* curl =
+        curl_easy_init();
 
     if (curl == nullptr)
     {
@@ -134,23 +159,28 @@ bool CloudflareClient::sendSensorData(float temperature, float humidity)
             << "curl_easy_init failed."
             << std::endl;
 
+        m_retryableError = true;
+
         return false;
     }
 
     std::string response;
 
-    /*
-     * HTTPヘッダーを設定する。
-     */
     struct curl_slist* headers = nullptr;
 
     headers = curl_slist_append(
         headers,
         "Content-Type: application/json");
 
-    /*
-     * libcurlへ各種設定を行う。
-     */
+    const std::string authenticationHeader =
+        SHARED_SECRET_HEADER_NAME
+        + ": "
+        + m_sharedSecret;
+
+    headers = curl_slist_append(
+        headers,
+        authenticationHeader.c_str());
+
     curl_easy_setopt(
         curl,
         CURLOPT_URL,
@@ -171,10 +201,6 @@ bool CloudflareClient::sendSensorData(float temperature, float humidity)
         CURLOPT_HTTPHEADER,
         headers);
 
-    /*
-     * Workerから返ってきたレスポンスを
-     * writeCallback()で受け取る。
-     */
     curl_easy_setopt(
         curl,
         CURLOPT_WRITEFUNCTION,
@@ -186,73 +212,97 @@ bool CloudflareClient::sendSensorData(float temperature, float humidity)
         &response);
 
     /*
-     * 通信タイムアウトを設定する。
+     * 設計書上のHTTP Timeoutは5秒。
      */
+    curl_easy_setopt(
+        curl,
+        CURLOPT_TIMEOUT,
+        5L);
+
     curl_easy_setopt(
         curl,
         CURLOPT_CONNECTTIMEOUT,
         5L);
 
-    curl_easy_setopt(
-        curl,
-        CURLOPT_TIMEOUT,
-        10L);
-
     /*
-     * HTTP通信を実行する。
+     * DNS/TCP/TLS/Timeout等を含む
+     * libcurlの通信エラーはRetry対象。
      */
-    CURLcode result = curl_easy_perform(curl);
+    const CURLcode result =
+        curl_easy_perform(curl);
 
     bool success = false;
 
     if (result != CURLE_OK)
     {
         std::cerr
-            << "HTTP POST failed: "
+            << "HTTP communication failed: "
             << curl_easy_strerror(result)
             << std::endl;
+
+        m_retryableError = true;
     }
     else
     {
-        long httpStatusCode = 0;
-
         curl_easy_getinfo(
             curl,
             CURLINFO_RESPONSE_CODE,
-            &httpStatusCode);
+            &m_lastHttpStatusCode);
 
         std::cout
-            << "HTTP status: "
-            << httpStatusCode
-            << std::endl;
-
-        std::cout
-            << "Worker response: "
-            << response
+            << "HTTP status="
+            << m_lastHttpStatusCode
             << std::endl;
 
         /*
-         * 2xxをHTTP通信成功とする。
+         * Shared SecretやResponse内容など、
+         * 秘密情報をログへ出力しない。
          */
-        if (httpStatusCode >= 200 &&
-            httpStatusCode < 300)
+
+        if (m_lastHttpStatusCode >= 200 &&
+            m_lastHttpStatusCode < 300)
         {
             success = true;
+            m_retryableError = false;
+        }
+        else if (
+            m_lastHttpStatusCode >= 500 &&
+            m_lastHttpStatusCode < 600)
+        {
+            std::cerr
+                << "HTTP 5xx received."
+                << std::endl;
+
+            m_retryableError = true;
         }
         else
         {
             std::cerr
-                << "Worker returned HTTP error."
+                << "HTTP 4xx or other error received."
                 << std::endl;
+
+            m_retryableError = false;
         }
     }
 
-    /*
-     * libcurlで確保したリソースを解放する。
-     */
     curl_slist_free_all(headers);
-
     curl_easy_cleanup(curl);
 
     return success;
+}
+
+/**
+ * @brief 最後のHTTPステータスコードを取得する
+ */
+long CloudflareClient::getLastHttpStatusCode() const
+{
+    return m_lastHttpStatusCode;
+}
+
+/**
+ * @brief 最後の通信がRetry対象か取得する
+ */
+bool CloudflareClient::isRetryableError() const
+{
+    return m_retryableError;
 }
