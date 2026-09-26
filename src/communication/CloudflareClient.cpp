@@ -30,9 +30,7 @@ static size_t writeCallback(
     std::string* response =
         static_cast<std::string*>(userData);
 
-    response->append(
-        contents,
-        totalSize);
+    response->append(contents, totalSize);
 
     return totalSize;
 }
@@ -42,8 +40,7 @@ static size_t writeCallback(
  *
  * @param workerUrl Cloudflare WorkerのURL
  */
-CloudflareClient::CloudflareClient(
-    const std::string& workerUrl)
+CloudflareClient::CloudflareClient(const std::string& workerUrl)
     : m_workerUrl(workerUrl),
       m_initialized(false)
 {
@@ -64,8 +61,7 @@ CloudflareClient::~CloudflareClient()
  */
 bool CloudflareClient::initialize()
 {
-    CURLcode result =
-        curl_global_init(CURL_GLOBAL_DEFAULT);
+    CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
 
     if (result != CURLE_OK)
     {
@@ -95,9 +91,7 @@ bool CloudflareClient::initialize()
  * @return true 送信成功
  * @return false 送信失敗
  */
-bool CloudflareClient::sendSensorData(
-    float temperature,
-    float humidity)
+bool CloudflareClient::sendSensorData(float temperature, float humidity)
 {
     if (!m_initialized)
     {
@@ -125,8 +119,7 @@ bool CloudflareClient::sendSensorData(
         << humidity
         << "}";
 
-    const std::string jsonData =
-        jsonStream.str();
+    const std::string jsonData = jsonStream.str();
 
     std::cout
         << "POST data: "
@@ -208,8 +201,7 @@ bool CloudflareClient::sendSensorData(
     /*
      * HTTP通信を実行する。
      */
-    CURLcode result =
-        curl_easy_perform(curl);
+    CURLcode result = curl_easy_perform(curl);
 
     bool success = false;
 

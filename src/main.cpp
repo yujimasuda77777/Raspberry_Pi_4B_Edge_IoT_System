@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <string>
 #include <thread>
 
 int main()
@@ -23,8 +24,7 @@ int main()
     /*
      * DHT11センサを生成する。
      */
-    Dht11Sensor sensor(
-        dht11GpioPin);
+    Dht11Sensor sensor(dht11GpioPin);
 
     /*
      * DHT11を初期化する。
@@ -41,8 +41,7 @@ int main()
     /*
      * Cloudflare通信クライアントを生成する。
      */
-    CloudflareClient cloudClient(
-        workerUrl);
+    CloudflareClient cloudClient(workerUrl);
 
     /*
      * Cloudflare通信を初期化する。
@@ -71,9 +70,7 @@ int main()
         /*
          * DHT11から温度・湿度を取得する。
          */
-        if (sensor.read(
-                temperature,
-                humidity))
+        if (sensor.read(temperature, humidity))
         {
             std::cout
                 << "Temperature: "

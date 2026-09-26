@@ -17,8 +17,7 @@ public:
      *
      * @param workerUrl Cloudflare WorkerのURL
      */
-    explicit CloudflareClient(
-        const std::string& workerUrl);
+    explicit CloudflareClient(const std::string& workerUrl);
 
     /**
      * @brief デストラクタ
@@ -42,12 +41,17 @@ public:
      * @return true 送信成功
      * @return false 送信失敗
      */
-    bool sendSensorData(
-        float temperature,
-        float humidity);
+    bool sendSensorData(float temperature, float humidity);
 
 private:
+    /**
+     * @brief Cloudflare WorkerのURL
+     */
     std::string m_workerUrl;
+
+    /**
+     * @brief HTTP通信機能が初期化済みか
+     */
     bool m_initialized;
 };
 

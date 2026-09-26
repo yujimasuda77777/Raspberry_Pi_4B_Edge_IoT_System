@@ -28,7 +28,6 @@ struct GpioTransition
     std::uint64_t timestamp;
 };
 
-
 /**
  * @brief 現在時刻をマイクロ秒で取得する
  *
@@ -40,18 +39,11 @@ static std::uint64_t getMonotonicTimeUs()
 {
     struct timespec timeSpec{};
 
-    clock_gettime(
-        CLOCK_MONOTONIC,
-        &timeSpec);
+    clock_gettime(CLOCK_MONOTONIC, &timeSpec);
 
-    return
-        static_cast<std::uint64_t>(
-            timeSpec.tv_sec) * 1000000ULL
-        +
-        static_cast<std::uint64_t>(
-            timeSpec.tv_nsec) / 1000ULL;
+    return static_cast<std::uint64_t>(timeSpec.tv_sec) * 1000000ULL
+        + static_cast<std::uint64_t>(timeSpec.tv_nsec) / 1000ULL;
 }
-
 
 /**
  * @brief コンストラクタ
@@ -62,7 +54,6 @@ Dht11Sensor::Dht11Sensor(unsigned int gpioPin)
       m_gpioClaimed(false)
 {
 }
-
 
 /**
  * @brief デストラクタ
@@ -77,7 +68,6 @@ Dht11Sensor::~Dht11Sensor()
         m_gpioHandle = -1;
     }
 }
-
 
 /**
  * @brief DHT11を初期化する
@@ -117,8 +107,7 @@ bool Dht11Sensor::initialize()
      *
      * ここでも同じように100ms待つ。
      */
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     releaseGpio();
 
@@ -130,12 +119,10 @@ bool Dht11Sensor::initialize()
     return true;
 }
 
-
 /**
  * @brief GPIOを出力として確保する
  */
-bool Dht11Sensor::configureOutput(
-    int initialValue)
+bool Dht11Sensor::configureOutput(int initialValue)
 {
     if (m_gpioHandle < 0)
     {
@@ -148,12 +135,11 @@ bool Dht11Sensor::configureOutput(
      */
     releaseGpio();
 
-    const int result =
-        lgGpioClaimOutput(
-            m_gpioHandle,
-            0,
-            m_gpioPin,
-            initialValue);
+    const int result = lgGpioClaimOutput(
+        m_gpioHandle,
+        0,
+        m_gpioPin,
+        initialValue);
 
     if (result < 0)
     {
@@ -173,7 +159,6 @@ bool Dht11Sensor::configureOutput(
     return true;
 }
 
-
 /**
  * @brief GPIOを入力として確保する
  */
@@ -190,11 +175,10 @@ bool Dht11Sensor::configureInput()
      */
     releaseGpio();
 
-    const int result =
-        lgGpioClaimInput(
-            m_gpioHandle,
-            0,
-            m_gpioPin);
+    const int result = lgGpioClaimInput(
+        m_gpioHandle,
+        0,
+        m_gpioPin);
 
     if (result < 0)
     {
@@ -214,7 +198,6 @@ bool Dht11Sensor::configureInput()
     return true;
 }
 
-
 /**
  * @brief GPIOを解放する
  */
@@ -227,20 +210,16 @@ void Dht11Sensor::releaseGpio()
 
     if (m_gpioClaimed)
     {
-        lgGpioFree(
-            m_gpioHandle,
-            m_gpioPin);
+        lgGpioFree(m_gpioHandle, m_gpioPin);
 
         m_gpioClaimed = false;
     }
 }
 
-
 /**
  * @brief DHT11から40bitの生データを取得する
  */
-bool Dht11Sensor::readRawData(
-    std::uint8_t data[5])
+bool Dht11Sensor::readRawData(std::uint8_t data[5])
 {
     if (data == nullptr)
     {
@@ -277,8 +256,7 @@ bool Dht11Sensor::readRawData(
      * に相当する。
      * --------------------------------------------------
      */
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(18));
+    std::this_thread::sleep_for(std::chrono::milliseconds(18));
 
     /*
      * --------------------------------------------------
@@ -327,15 +305,13 @@ bool Dht11Sensor::readRawData(
     /*
      * 読み取り開始時刻。
      */
-    const std::uint64_t startTime =
-        getMonotonicTimeUs();
+    const std::uint64_t startTime = getMonotonicTimeUs();
 
     /*
      * Python版と同じく、
      * 最大250ms監視する。
      */
-    constexpr std::uint64_t TIMEOUT_US =
-        250000ULL;
+    constexpr std::uint64_t TIMEOUT_US = 250000ULL;
 
     /*
      * 現在認識しているGPIO状態。
@@ -347,14 +323,12 @@ bool Dht11Sensor::readRawData(
 
     while (true)
     {
-        const std::uint64_t currentTime =
-            getMonotonicTimeUs();
+        const std::uint64_t currentTime = getMonotonicTimeUs();
 
         /*
          * 250msを超えたらタイムアウト。
          */
-        if ((currentTime - startTime) >=
-            TIMEOUT_US)
+        if ((currentTime - startTime) >= TIMEOUT_US)
         {
             break;
         }
@@ -362,10 +336,7 @@ bool Dht11Sensor::readRawData(
         /*
          * GPIO状態を取得する。
          */
-        const int level =
-            lgGpioRead(
-                m_gpioHandle,
-                m_gpioPin);
+        const int level = lgGpioRead(m_gpioHandle, m_gpioPin);
 
         if (level < 0)
         {
@@ -391,8 +362,7 @@ bool Dht11Sensor::readRawData(
             transition.level = level;
             transition.timestamp = currentTime;
 
-            transitions.push_back(
-                transition);
+            transitions.push_back(transition);
 
             previousLevel = level;
 
@@ -472,8 +442,7 @@ bool Dht11Sensor::readRawData(
                 const std::uint64_t pulseWidth =
                     transition.timestamp - highStart;
 
-                highPulses.push_back(
-                    pulseWidth);
+                highPulses.push_back(pulseWidth);
 
                 highActive = false;
             }
@@ -506,23 +475,19 @@ bool Dht11Sensor::readRawData(
      * データ部分を利用しやすくする。
      * --------------------------------------------------
      */
-    const std::size_t startIndex =
-        highPulses.size() - 40;
+    const std::size_t startIndex = highPulses.size() - 40;
 
     /*
      * --------------------------------------------------
      * 7. 40bitを5バイトへ変換する
      * --------------------------------------------------
      */
-    for (int bitIndex = 0;
-         bitIndex < 40;
-         ++bitIndex)
+    for (int bitIndex = 0; bitIndex < 40; ++bitIndex)
     {
         const std::uint64_t pulseWidth =
             highPulses[
                 startIndex +
-                static_cast<std::size_t>(
-                    bitIndex)];
+                static_cast<std::size_t>(bitIndex)];
 
         /*
          * 0:
@@ -533,50 +498,40 @@ bool Dht11Sensor::readRawData(
          *
          * 40usを境界値とする。
          */
-        const bool bitValue =
-            pulseWidth > 40;
+        const bool bitValue = pulseWidth > 40;
 
-        const int byteIndex =
-            bitIndex / 8;
+        const int byteIndex = bitIndex / 8;
 
-        const int bitPosition =
-            7 - (bitIndex % 8);
+        const int bitPosition = 7 - (bitIndex % 8);
 
         if (bitValue)
         {
-            data[byteIndex] |=
-                static_cast<std::uint8_t>(
-                    1U << bitPosition);
+            data[byteIndex] |= static_cast<std::uint8_t>(
+                1U << bitPosition);
         }
     }
 
     return true;
 }
 
-
 /**
  * @brief DHT11チェックサムを確認する
  */
-bool Dht11Sensor::checkChecksum(
-    const std::uint8_t data[5]) const
+bool Dht11Sensor::checkChecksum(const std::uint8_t data[5]) const
 {
-    const std::uint8_t checksum =
-        static_cast<std::uint8_t>(
-            data[0]
-            + data[1]
-            + data[2]
-            + data[3]);
+    const std::uint8_t checksum = static_cast<std::uint8_t>(
+        data[0]
+        + data[1]
+        + data[2]
+        + data[3]);
 
     return checksum == data[4];
 }
 
-
 /**
  * @brief DHT11から温度・湿度を取得する
  */
-bool Dht11Sensor::read(
-    float& temperature,
-    float& humidity)
+bool Dht11Sensor::read(float& temperature, float& humidity)
 {
     std::uint8_t data[5] = {};
 
