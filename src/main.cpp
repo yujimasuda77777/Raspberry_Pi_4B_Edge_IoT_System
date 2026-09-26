@@ -1,13 +1,48 @@
 #include "communication/CloudflareClient.h"
+
 #include "ipc/SensorDataQueue.h"
+
 #include "sensor/Dht11Sensor.h"
+
 #include "task/CommunicationTask.h"
+
 #include "task/SensorTask.h"
 
 #include <chrono>
+
+#include <csignal>
+
 #include <iostream>
+
 #include <string>
+
 #include <thread>
+
+/**
+ * @brief アプリケーション終了要求
+ *
+ * Ctrl+CによるSIGINTを受け取った場合、
+ * このフラグをtrueにしてメインループを終了させる。
+ */
+volatile std::sig_atomic_t g_shutdownRequested = 0;
+
+/**
+ * @brief シグナルハンドラ
+ *
+ * @param signalNumber 受信したシグナル番号
+ */
+void signalHandler(int signalNumber)
+{
+    /*
+     * SIGINTを受信した場合は、
+     * アプリケーション終了を要求する。
+     */
+    if (signalNumber == SIGINT)
+    {
+        g_shutdownRequested = 1;
+    }
+}
+
 /**
  * @brief アプリケーションのエントリーポイント
  *
@@ -16,6 +51,12 @@
  */
 int main()
 {
+    /*
+     * SIGINT（Ctrl+C）を受信した場合に、
+     * signalHandler()を呼び出すよう設定する。
+     */
+    std::signal(SIGINT, signalHandler);
+
     /*
      * DHT11を接続しているGPIO番号
      *
@@ -101,6 +142,10 @@ int main()
             << "Communication Thread start failed."
             << std::endl;
 
+        /*
+         * Communication Threadの起動に失敗した場合は、
+         * 既に起動しているSensor Threadを停止する。
+         */
         sensorTask.stop();
 
         return 1;
@@ -111,18 +156,52 @@ int main()
         << std::endl;
 
     /*
-     * 今回は既存システムと同様に、
-     * メインThreadを待機させる。
-     *
-     * 実際の終了処理については、
-     * Lifecycle / Shutdown設計に合わせて
-     * 今後整理する。
+     * メインThreadは、
+     * Ctrl+Cによる終了要求が発生するまで待機する。
      */
-    while (true)
+    while (g_shutdownRequested == 0)
     {
         std::this_thread::sleep_for(
             std::chrono::seconds(1));
     }
+
+    /*
+     * Shutdown開始を表示する。
+     */
+    std::cout
+        << "Shutdown requested."
+        << std::endl;
+
+    /*
+     * Sensor Threadを停止する。
+     *
+     * これ以降、新しいセンサデータが
+     * Queueへ投入されないようにする。
+     */
+    sensorTask.stop();
+
+    /*
+     * QueueへShutdownを通知する。
+     *
+     * Communication ThreadがQueue待機中の場合は、
+     * condition_variableによって起床する。
+     */
+    dataQueue.shutdown();
+
+    /*
+     * Communication Threadを停止する。
+     *
+     * QueueからShutdown通知を受け取ることで、
+     * waitAndPop()から抜けてThreadが終了する。
+     */
+    communicationTask.stop();
+
+    /*
+     * 全Threadの終了が完了した。
+     */
+    std::cout
+        << "IoT system stopped."
+        << std::endl;
 
     return 0;
 }
