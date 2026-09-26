@@ -38,6 +38,16 @@ add_executable(
     # Thread間データ受け渡し
     #
     src/ipc/SensorDataQueue.cpp
+
+    #
+    # Sensor Thread
+    #
+    src/task/SensorTask.cpp
+
+    #
+    # Communication Thread
+    #
+    src/task/CommunicationTask.cpp
 )
 
 #

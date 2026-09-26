@@ -1,11 +1,19 @@
-#include "sensor/Dht11Sensor.h"
 #include "communication/CloudflareClient.h"
+#include "ipc/SensorDataQueue.h"
+#include "sensor/Dht11Sensor.h"
+#include "task/CommunicationTask.h"
+#include "task/SensorTask.h"
 
 #include <chrono>
 #include <iostream>
 #include <string>
 #include <thread>
-
+/**
+ * @brief アプリケーションのエントリーポイント
+ *
+ * @return 0 正常終了
+ * @return 1 初期化失敗
+ */
 int main()
 {
     /*
@@ -55,66 +63,65 @@ int main()
         return 1;
     }
 
+    /*
+     * SensorDataをThread間で受け渡すQueueを生成する。
+     */
+    SensorDataQueue dataQueue(10);
+
+    /*
+     * Sensor Taskを生成する。
+     */
+    SensorTask sensorTask(sensor, dataQueue);
+
+    /*
+     * Communication Taskを生成する。
+     */
+    CommunicationTask communicationTask(
+        cloudClient,
+        dataQueue);
+
+    /*
+     * Sensor Threadを開始する。
+     */
+    if (!sensorTask.start())
+    {
+        std::cerr
+            << "Sensor Thread start failed."
+            << std::endl;
+
+        return 1;
+    }
+
+    /*
+     * Communication Threadを開始する。
+     */
+    if (!communicationTask.start())
+    {
+        std::cerr
+            << "Communication Thread start failed."
+            << std::endl;
+
+        sensorTask.stop();
+
+        return 1;
+    }
+
     std::cout
         << "IoT system started."
         << std::endl;
 
     /*
-     * センサ取得 → Cloudflare送信を繰り返す。
+     * 今回は既存システムと同様に、
+     * メインThreadを待機させる。
+     *
+     * 実際の終了処理については、
+     * Lifecycle / Shutdown設計に合わせて
+     * 今後整理する。
      */
     while (true)
     {
-        float temperature = 0.0f;
-        float humidity = 0.0f;
-
-        /*
-         * DHT11から温度・湿度を取得する。
-         */
-        if (sensor.read(temperature, humidity))
-        {
-            std::cout
-                << "Temperature: "
-                << temperature
-                << " C, Humidity: "
-                << humidity
-                << " %"
-                << std::endl;
-
-            /*
-             * 取得した実測値を
-             * Cloudflare Workerへ送信する。
-             */
-            if (cloudClient.sendSensorData(
-                    temperature,
-                    humidity))
-            {
-                std::cout
-                    << "Sensor data sent successfully."
-                    << std::endl;
-            }
-            else
-            {
-                std::cerr
-                    << "Sensor data send failed."
-                    << std::endl;
-            }
-        }
-        else
-        {
-            /*
-             * DHT11取得に失敗した場合は、
-             * Cloudflareへ送信しない。
-             */
-            std::cerr
-                << "DHT11 read failed."
-                << std::endl;
-        }
-
-        /*
-         * 次の取得まで3秒待つ。
-         */
         std::this_thread::sleep_for(
-            std::chrono::seconds(3));
+            std::chrono::seconds(1));
     }
 
     return 0;
