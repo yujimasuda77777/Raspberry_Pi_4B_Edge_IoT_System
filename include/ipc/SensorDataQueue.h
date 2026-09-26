@@ -13,6 +13,9 @@
  *
  * Sensor ThreadがSensorDataを投入し、
  * Communication ThreadがSensorDataを取得する。
+ *
+ * Shutdown要求が発生した場合は、
+ * 待機中のThreadを起床させて終了できるようにする。
  */
 class SensorDataQueue
 {
@@ -43,14 +46,21 @@ public:
      * @brief Queueからセンサデータを取得する
      *
      * Queueが空の場合は、
-     * データが投入されるまで待機する。
+     * データが投入されるかShutdownされるまで待機する。
      *
      * @param data 取得したセンサデータ
      *
      * @return true 取得成功
-     * @return false 取得失敗
+     * @return false Shutdown要求により取得終了
      */
     bool waitAndPop(SensorData& data);
+
+    /**
+     * @brief QueueのShutdownを要求する
+     *
+     * 待機中のThreadを起床させる。
+     */
+    void shutdown();
 
     /**
      * @brief 現在のQueue保持数を取得する
@@ -71,7 +81,7 @@ private:
     mutable std::mutex m_mutex;
 
     /**
-     * @brief データ投入を通知するcondition_variable
+     * @brief Queueの状態変化を通知するcondition_variable
      */
     std::condition_variable m_conditionVariable;
 
@@ -79,6 +89,13 @@ private:
      * @brief Queueの最大保持数
      */
     std::size_t m_maxSize;
+
+    /**
+     * @brief Shutdown要求状態
+     *
+     * trueの場合、待機中のThreadを終了させる。
+     */
+    bool m_shutdown;
 };
 
 #endif

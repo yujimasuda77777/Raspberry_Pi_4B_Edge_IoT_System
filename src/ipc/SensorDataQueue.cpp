@@ -6,7 +6,8 @@
  * @param maxSize Queueの最大保持数
  */
 SensorDataQueue::SensorDataQueue(std::size_t maxSize)
-    : m_maxSize(maxSize)
+    : m_maxSize(maxSize),
+      m_shutdown(false)
 {
 }
 
@@ -56,28 +57,40 @@ bool SensorDataQueue::push(const SensorData& data)
  * @brief Queueからセンサデータを取得する
  *
  * Queueが空の場合は、
- * データが投入されるまで待機する。
+ * データが投入されるかShutdownされるまで待機する。
  *
  * @param data 取得したセンサデータ
  *
  * @return true 取得成功
- * @return false 取得失敗
+ * @return false Shutdown要求により取得終了
  */
 bool SensorDataQueue::waitAndPop(SensorData& data)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
     /*
-     * Queueにデータが入るまで待機する。
+     * Queueにデータが入るか、
+     * Shutdown要求が発生するまで待機する。
      *
-     * Queueが空の間はCPUを無駄に使用しない。
+     * Queueが空でShutdownされていない場合は、
+     * CPUを無駄に使用しない。
      */
     m_conditionVariable.wait(
         lock,
         [this]()
         {
-            return !m_queue.empty();
+            return !m_queue.empty() || m_shutdown;
         });
+
+    /*
+     * Shutdown要求があり、
+     * Queueにもデータが残っていない場合は、
+     * Threadを終了させる。
+     */
+    if (m_shutdown && m_queue.empty())
+    {
+        return false;
+    }
 
     /*
      * Queueの先頭データを取得する。
@@ -90,6 +103,28 @@ bool SensorDataQueue::waitAndPop(SensorData& data)
     m_queue.pop();
 
     return true;
+}
+
+/**
+ * @brief QueueのShutdownを要求する
+ *
+ * 待機中のThreadを起床させる。
+ */
+void SensorDataQueue::shutdown()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        /*
+         * Shutdown状態に変更する。
+         */
+        m_shutdown = true;
+    }
+
+    /*
+     * waitAndPop()で待機しているThreadを起床させる。
+     */
+    m_conditionVariable.notify_all();
 }
 
 /**
