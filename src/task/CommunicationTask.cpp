@@ -1,6 +1,8 @@
 #include "task/CommunicationTask.h"
 
+#include <chrono>
 #include <iostream>
+#include <thread>
 
 /**
  * @brief コンストラクタ
@@ -34,23 +36,17 @@ CommunicationTask::~CommunicationTask()
  */
 bool CommunicationTask::start()
 {
-    /*
-     * 既にThreadが動作している場合は、
-     * 二重起動しない。
-     */
     if (m_running)
     {
+        std::cerr
+            << "Communication Thread is already running."
+            << std::endl;
+
         return false;
     }
 
-    /*
-     * 停止要求を解除する。
-     */
     m_stopRequested = false;
 
-    /*
-     * Communication Threadを起動する。
-     */
     m_thread = std::thread(
         &CommunicationTask::run,
         this);
@@ -63,15 +59,8 @@ bool CommunicationTask::start()
  */
 void CommunicationTask::stop()
 {
-    /*
-     * 停止要求を設定する。
-     */
     m_stopRequested = true;
 
-    /*
-     * Threadが起動している場合は、
-     * Threadの終了を待つ。
-     */
     if (m_thread.joinable())
     {
         m_thread.join();
@@ -96,18 +85,12 @@ bool CommunicationTask::isRunning() const
  */
 void CommunicationTask::run()
 {
-    /*
-     * Threadが動作中であることを記録する。
-     */
     m_running = true;
 
     std::cout
         << "Communication Thread started."
         << std::endl;
 
-    /*
-     * Communication Threadのメインループ。
-     */
     while (!m_stopRequested)
     {
         SensorData data{};
@@ -116,25 +99,76 @@ void CommunicationTask::run()
          * Queueからセンサデータを取得する。
          *
          * Queueが空の場合は、
-         * データが投入されるか、
-         * Shutdownされるまで待機する。
+         * データ投入またはShutdownまで待機する。
          */
         if (!m_dataQueue.waitAndPop(data))
         {
-            /*
-             * QueueからShutdown通知を受け取った場合は、
-             * Communication Threadを終了する。
-             */
             break;
         }
 
         /*
-         * Queueから取得したデータを
-         * Cloudflare Workerへ送信する。
+         * Cloudflareへの送信を最大3回試行する。
          */
-        if (m_cloudClient.sendSensorData(
-                data.temperature,
-                data.humidity))
+        constexpr int maxRetryCount = 3;
+
+        bool sendSuccess = false;
+
+        for (int retryCount = 1;
+             retryCount <= maxRetryCount;
+             ++retryCount)
+        {
+            if (m_stopRequested)
+            {
+                break;
+            }
+
+            std::cout
+                << "Sending sensor data. Attempt "
+                << retryCount
+                << "/"
+                << maxRetryCount
+                << "."
+                << std::endl;
+
+            if (m_cloudClient.sendSensorData(
+                    data.temperature,
+                    data.humidity))
+            {
+                sendSuccess = true;
+                break;
+            }
+
+            /*
+             * 最終試行の場合は、
+             * これ以上待機しない。
+             */
+            if (retryCount == maxRetryCount)
+            {
+                break;
+            }
+
+            /*
+             * 指数バックオフで待機する。
+             *
+             * 1回目失敗 → 2秒
+             * 2回目失敗 → 4秒
+             */
+            const int retryDelaySeconds =
+                1 << retryCount;
+
+            std::cerr
+                << "Sensor data send failed. "
+                << "Retrying after "
+                << retryDelaySeconds
+                << " seconds."
+                << std::endl;
+
+            std::this_thread::sleep_for(
+                std::chrono::seconds(
+                    retryDelaySeconds));
+        }
+
+        if (sendSuccess)
         {
             std::cout
                 << "Sensor data sent successfully."
@@ -143,7 +177,9 @@ void CommunicationTask::run()
         else
         {
             std::cerr
-                << "Sensor data send failed."
+                << "Sensor data send failed after "
+                << maxRetryCount
+                << " attempts."
                 << std::endl;
         }
     }
@@ -152,8 +188,5 @@ void CommunicationTask::run()
         << "Communication Thread stopped."
         << std::endl;
 
-    /*
-     * Thread停止を記録する。
-     */
     m_running = false;
 }

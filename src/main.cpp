@@ -9,20 +9,13 @@
 #include "task/SensorTask.h"
 
 #include <chrono>
-
 #include <csignal>
-
 #include <iostream>
-
 #include <string>
-
 #include <thread>
 
 /**
  * @brief アプリケーション終了要求
- *
- * Ctrl+CによるSIGINTを受け取った場合、
- * このフラグをtrueにしてメインループを終了させる。
  */
 volatile std::sig_atomic_t g_shutdownRequested = 0;
 
@@ -33,10 +26,6 @@ volatile std::sig_atomic_t g_shutdownRequested = 0;
  */
 void signalHandler(int signalNumber)
 {
-    /*
-     * SIGINTを受信した場合は、
-     * アプリケーション終了を要求する。
-     */
     if (signalNumber == SIGINT)
     {
         g_shutdownRequested = 1;
@@ -52,15 +41,12 @@ void signalHandler(int signalNumber)
 int main()
 {
     /*
-     * SIGINT（Ctrl+C）を受信した場合に、
-     * signalHandler()を呼び出すよう設定する。
+     * Ctrl+CによるSIGINTを受信する。
      */
     std::signal(SIGINT, signalHandler);
 
     /*
-     * DHT11を接続しているGPIO番号
-     *
-     * Raspberry PiのBCM GPIO14を使用する。
+     * DHT11のBCM GPIO番号
      */
     const unsigned int dht11GpioPin = 14;
 
@@ -81,7 +67,7 @@ int main()
     if (!sensor.initialize())
     {
         std::cerr
-            << "DHT11 initialize failed."
+            << "ERROR: DHT11 initialize failed."
             << std::endl;
 
         return 1;
@@ -98,21 +84,25 @@ int main()
     if (!cloudClient.initialize())
     {
         std::cerr
-            << "Cloudflare client initialize failed."
+            << "ERROR: Cloudflare client initialize failed."
             << std::endl;
 
         return 1;
     }
 
     /*
-     * SensorDataをThread間で受け渡すQueueを生成する。
+     * SensorData Queueを生成する。
+     *
+     * 最大10件保持する。
      */
     SensorDataQueue dataQueue(10);
 
     /*
      * Sensor Taskを生成する。
      */
-    SensorTask sensorTask(sensor, dataQueue);
+    SensorTask sensorTask(
+        sensor,
+        dataQueue);
 
     /*
      * Communication Taskを生成する。
@@ -127,7 +117,7 @@ int main()
     if (!sensorTask.start())
     {
         std::cerr
-            << "Sensor Thread start failed."
+            << "ERROR: Sensor Thread start failed."
             << std::endl;
 
         return 1;
@@ -139,12 +129,11 @@ int main()
     if (!communicationTask.start())
     {
         std::cerr
-            << "Communication Thread start failed."
+            << "ERROR: Communication Thread start failed."
             << std::endl;
 
         /*
-         * Communication Threadの起動に失敗した場合は、
-         * 既に起動しているSensor Threadを停止する。
+         * Sensor Threadを停止する。
          */
         sensorTask.stop();
 
@@ -156,8 +145,7 @@ int main()
         << std::endl;
 
     /*
-     * メインThreadは、
-     * Ctrl+Cによる終了要求が発生するまで待機する。
+     * Ctrl+Cによる終了要求を待つ。
      */
     while (g_shutdownRequested == 0)
     {
@@ -165,40 +153,28 @@ int main()
             std::chrono::seconds(1));
     }
 
-    /*
-     * Shutdown開始を表示する。
-     */
     std::cout
         << "Shutdown requested."
         << std::endl;
 
     /*
      * Sensor Threadを停止する。
-     *
-     * これ以降、新しいセンサデータが
-     * Queueへ投入されないようにする。
      */
     sensorTask.stop();
 
     /*
-     * QueueへShutdownを通知する。
+     * QueueをShutdownする。
      *
-     * Communication ThreadがQueue待機中の場合は、
-     * condition_variableによって起床する。
+     * Communication Threadが待機中なら、
+     * notify_all()によって起床する。
      */
     dataQueue.shutdown();
 
     /*
      * Communication Threadを停止する。
-     *
-     * QueueからShutdown通知を受け取ることで、
-     * waitAndPop()から抜けてThreadが終了する。
      */
     communicationTask.stop();
 
-    /*
-     * 全Threadの終了が完了した。
-     */
     std::cout
         << "IoT system stopped."
         << std::endl;

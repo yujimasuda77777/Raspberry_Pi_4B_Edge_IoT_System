@@ -1,0 +1,21 @@
+[Unit]
+Description=Raspberry Pi 4B Edge IoT System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User=yuji
+WorkingDirectory=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System
+
+ExecStart=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System/build/Raspberry_Pi_4B_Edge_IoT_System
+
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
