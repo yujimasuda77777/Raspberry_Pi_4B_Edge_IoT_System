@@ -116,28 +116,35 @@ void CommunicationTask::run()
          * Queueからセンサデータを取得する。
          *
          * Queueが空の場合は、
-         * データが投入されるまで待機する。
+         * データが投入されるか、
+         * Shutdownされるまで待機する。
          */
-        if (m_dataQueue.waitAndPop(data))
+        if (!m_dataQueue.waitAndPop(data))
         {
             /*
-             * Queueから取得したデータを
-             * Cloudflare Workerへ送信する。
+             * QueueからShutdown通知を受け取った場合は、
+             * Communication Threadを終了する。
              */
-            if (m_cloudClient.sendSensorData(
-                    data.temperature,
-                    data.humidity))
-            {
-                std::cout
-                    << "Sensor data sent successfully."
-                    << std::endl;
-            }
-            else
-            {
-                std::cerr
-                    << "Sensor data send failed."
-                    << std::endl;
-            }
+            break;
+        }
+
+        /*
+         * Queueから取得したデータを
+         * Cloudflare Workerへ送信する。
+         */
+        if (m_cloudClient.sendSensorData(
+                data.temperature,
+                data.humidity))
+        {
+            std::cout
+                << "Sensor data sent successfully."
+                << std::endl;
+        }
+        else
+        {
+            std::cerr
+                << "Sensor data send failed."
+                << std::endl;
         }
     }
 
