@@ -4,7 +4,7 @@
 
 struct SensorData
 {
-    float temperature:
+    float temperature;
 
     float humidity;
 }
