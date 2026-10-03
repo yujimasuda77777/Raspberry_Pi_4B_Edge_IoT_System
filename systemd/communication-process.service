@@ -11,9 +11,7 @@ Group=edgeiot
 
 EnvironmentFile=/etc/raspberry-pi-edge-iot/communication.env
 
-WorkingDirectory=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System
-
-ExecStart=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System/build/communication-process
+ExecStart=/usr/local/bin/communication-process
 
 Restart=on-failure
 RestartSec=5s

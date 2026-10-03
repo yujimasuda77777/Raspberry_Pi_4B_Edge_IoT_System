@@ -9,9 +9,7 @@ User=edgeiot
 Group=edgeiot
 SupplementaryGroups=gpio
 
-WorkingDirectory=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System
-
-ExecStart=/home/yuji/Raspberry_Pi_4B_Edge_IoT_System/build/sensor-process
+ExecStart=/usr/local/bin/sensor-process
 
 Restart=on-failure
 RestartSec=5s
