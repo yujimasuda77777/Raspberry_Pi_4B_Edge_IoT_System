@@ -1,7 +1,7 @@
 #ifndef DHT11_SENSOR_H
 #define DHT11_SENSOR_H
 
-#include <cstdint>
+#include <cstdint>  // std::uint8_t型を使用する
 
 /**
  * @brief DHT11温湿度センサを制御するクラス

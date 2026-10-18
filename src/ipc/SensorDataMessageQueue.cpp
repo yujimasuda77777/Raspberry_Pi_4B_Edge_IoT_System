@@ -1,21 +1,15 @@
-#include "ipc/SensorDataMessageQueue.h"
+#include "ipc/SensorDataMessageQueue.h"  // SensorDataMessageQueueクラスの宣言を読み込む
 
-#include <cerrno>
-#include <cstring>
-#include <fcntl.h>
-#include <iostream>
-#include <sys/stat.h>
+#include <cerrno>       // errnoおよびEAGAIN、EINTR、ENOENTなどのエラー番号を使用する
+#include <cstring>      // strerror()でエラー番号に対応する文字列を取得する
+#include <fcntl.h>      // O_RDWR、O_WRONLY、O_CREAT、O_NONBLOCKなどのフラグを使用する
+#include <iostream>     // std::cout、std::cerrでログを出力する
+#include <sys/stat.h>   // mode_t型を使用し、Message Queueのアクセス権を指定する
 
-/**
- * @brief Message Queue最大メッセージ数
- *
- * 設計書の確定値は100件。
- */
+// Message Queueに格納できる最大メッセージ数
 constexpr long QUEUE_MAX_MESSAGES = 100;
 
-/**
- * @brief Message Queueのアクセス権
- */
+// Message Queueのアクセス権（所有者・グループに読み書きを許可）
 constexpr mode_t QUEUE_PERMISSIONS = 0660;
 
 /**
@@ -24,6 +18,7 @@ constexpr mode_t QUEUE_PERMISSIONS = 0660;
 SensorDataMessageQueue::SensorDataMessageQueue(
     const std::string& queueName,
     bool createQueue)
+    // Queue名、作成有無、未オープン状態をメンバ変数に設定する
     : m_queueName(queueName),
       m_createQueue(createQueue),
       m_queueDescriptor(static_cast<mqd_t>(-1)),
@@ -36,6 +31,7 @@ SensorDataMessageQueue::SensorDataMessageQueue(
  */
 SensorDataMessageQueue::~SensorDataMessageQueue()
 {
+    // オブジェクト破棄時にQueueを閉じる
     close();
 }
 
@@ -44,6 +40,7 @@ SensorDataMessageQueue::~SensorDataMessageQueue()
  */
 bool SensorDataMessageQueue::initialize()
 {
+    // Queueの作成またはオープンを実行する
     return openQueue();
 }
 
@@ -52,6 +49,7 @@ bool SensorDataMessageQueue::initialize()
  */
 bool SensorDataMessageQueue::openQueue()
 {
+    // Queueの最大メッセージ数と1件あたりのサイズを設定する
     struct mq_attr attributes{};
 
     attributes.mq_flags = 0;
@@ -59,19 +57,23 @@ bool SensorDataMessageQueue::openQueue()
     attributes.mq_msgsize = sizeof(SensorData);
     attributes.mq_curmsgs = 0;
 
+    // 読み書き用のアクセスフラグを設定する
     int flags = O_RDWR;
 
+    // 指定されている場合はQueue作成フラグを追加する
     if (m_createQueue)
     {
         flags |= O_CREAT;
     }
 
+    // Queueを指定した属性とアクセス権でオープンする
     m_queueDescriptor = mq_open(
         m_queueName.c_str(),
         flags,
         QUEUE_PERMISSIONS,
         &attributes);
 
+    // オープンに失敗した場合はエラーを出力する
     if (m_queueDescriptor == static_cast<mqd_t>(-1))
     {
         std::cerr
@@ -85,6 +87,7 @@ bool SensorDataMessageQueue::openQueue()
         return false;
     }
 
+    // オープン済み状態に設定する
     m_opened = true;
 
     std::cout
@@ -101,6 +104,7 @@ bool SensorDataMessageQueue::openQueue()
  */
 bool SensorDataMessageQueue::send(const SensorData& data)
 {
+    // Queueがオープンされていない場合は送信しない
     if (!m_opened)
     {
         std::cerr
@@ -114,10 +118,12 @@ bool SensorDataMessageQueue::send(const SensorData& data)
      * Queue Full時にSensor Processを待たせないため、
      * O_NONBLOCKを付けたdescriptorを別途使用する。
      */
+    // 送信用の非ブロッキングdescriptorを取得する
     mqd_t nonBlockingDescriptor = mq_open(
         m_queueName.c_str(),
         O_WRONLY | O_NONBLOCK);
 
+    // descriptorの取得に失敗した場合はエラーを出力する
     if (nonBlockingDescriptor == static_cast<mqd_t>(-1))
     {
         std::cerr
@@ -129,18 +135,23 @@ bool SensorDataMessageQueue::send(const SensorData& data)
         return false;
     }
 
+    // SensorDataのメモリ領域をメッセージとしてQueueへ送信する
     const int result = mq_send(
         nonBlockingDescriptor,
         reinterpret_cast<const char*>(&data),
         sizeof(SensorData),
         0);
 
+    // 後続処理でerrnoが変化する前にエラー番号を保存する
     const int savedErrno = errno;
 
+    // 送信処理で使用したdescriptorを閉じる
     mq_close(nonBlockingDescriptor);
 
+    // 送信に失敗した場合はエラーの種類に応じてログを出力する
     if (result == -1)
     {
+        // Queueが満杯の場合は送信データを破棄したことを出力する
         if (savedErrno == EAGAIN)
         {
             std::cerr
@@ -168,6 +179,7 @@ bool SensorDataMessageQueue::send(const SensorData& data)
  */
 bool SensorDataMessageQueue::receive(SensorData& data)
 {
+    // Queueがオープンされていない場合は受信しない
     if (!m_opened)
     {
         std::cerr
@@ -177,14 +189,17 @@ bool SensorDataMessageQueue::receive(SensorData& data)
         return false;
     }
 
+    // Queueからメッセージを受信し、SensorDataのメモリ領域に格納する
     const ssize_t receivedSize = mq_receive(
         m_queueDescriptor,
         reinterpret_cast<char*>(&data),
         sizeof(SensorData),
         nullptr);
 
+    // 受信に失敗した場合はエラー番号を確認する
     if (receivedSize == -1)
     {
+        // システムコールが割り込まれた場合はエラー出力せずに戻る
         if (errno == EINTR)
         {
             return false;
@@ -199,6 +214,7 @@ bool SensorDataMessageQueue::receive(SensorData& data)
         return false;
     }
 
+    // 受信したデータサイズがSensorDataのサイズと一致するか確認する
     if (receivedSize != sizeof(SensorData))
     {
         std::cerr
@@ -218,13 +234,16 @@ bool SensorDataMessageQueue::receive(SensorData& data)
  */
 void SensorDataMessageQueue::close()
 {
+    // 未オープンの場合は何もせずに戻る
     if (!m_opened)
     {
         return;
     }
 
+    // オープン中のQueue descriptorを閉じる
     mq_close(m_queueDescriptor);
 
+    // descriptorを未オープン状態の値に戻す
     m_queueDescriptor = static_cast<mqd_t>(-1);
     m_opened = false;
 }
@@ -234,8 +253,10 @@ void SensorDataMessageQueue::close()
  */
 bool SensorDataMessageQueue::unlinkQueue()
 {
+    // Queue名を指定してMessage Queueを削除する
     if (mq_unlink(m_queueName.c_str()) == -1)
     {
+        // 既に削除されている場合は成功として扱う
         if (errno == ENOENT)
         {
             return true;

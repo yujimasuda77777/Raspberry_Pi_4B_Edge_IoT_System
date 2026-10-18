@@ -1,11 +1,11 @@
 #ifndef SENSOR_DATA_MESSAGE_QUEUE_H
 #define SENSOR_DATA_MESSAGE_QUEUE_H
 
-#include "common/SensorData.h"
+#include "common/SensorData.h"  // Queueで送受信する温湿度データの型を使用する
 
-#include <cstddef>
-#include <mqueue.h>
-#include <string>
+#include <cstddef>  // std::size_t型など、サイズを表す型を使用する
+#include <mqueue.h> // POSIX Message Queueのdescriptor型やAPIを使用する
+#include <string>   // Queue名を文字列として保持する
 
 /**
  * @brief SensorData用Linux Message Queueを管理するクラス

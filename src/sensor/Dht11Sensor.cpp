@@ -1,46 +1,37 @@
-#include "sensor/Dht11Sensor.h"
+#include "sensor/Dht11Sensor.h"  // Dht11Sensorクラスの宣言を読み込む
 
-#include <lgpio.h>
+#include <lgpio.h>      // GPIOチップの操作、GPIO入出力、GPIO確保・解放を行う
+#include <chrono>       // マイクロ秒・ミリ秒単位の時間を指定する
+#include <cstdint>      // 固定幅の整数型を使用する
+#include <ctime>        // clock_gettime()と時刻情報を使用する
+#include <iostream>     // 標準エラー出力へエラーログを出力する
+#include <thread>       // 指定時間だけ処理を待機させる
+#include <vector>       // GPIO状態変化とパルス幅を可変長配列に格納する
 
-#include <chrono>
-#include <cstdint>
-#include <ctime>
-#include <iostream>
-#include <thread>
-#include <vector>
-
-/**
- * @brief GPIO状態変化情報
- */
+// GPIOの状態と、その状態に変化した時刻を保持する構造体
 struct GpioTransition
 {
-    /**
-     * @brief GPIOレベル
-     *
-     * 0 = LOW
-     * 1 = HIGH
-     */
+    // GPIOの電圧レベル（0 = LOW、1 = HIGH）
     int level;
 
-    /**
-     * @brief 状態変化が発生した時刻[us]
-     */
+    // GPIOの状態変化が発生した時刻（マイクロ秒）
     std::uint64_t timestamp;
 };
 
 /**
  * @brief 現在時刻をマイクロ秒で取得する
  *
- * Python版のtime.monotonic()に相当する。
- *
  * @return 現在時刻[us]
  */
 static std::uint64_t getMonotonicTimeUs()
 {
+    // 秒とナノ秒を格納する時刻構造体を初期化する
     struct timespec timeSpec{};
 
+    // システム起動後の経過時間を取得する
     clock_gettime(CLOCK_MONOTONIC, &timeSpec);
 
+    // 秒をマイクロ秒へ変換し、ナノ秒から変換した値を加算する
     return static_cast<std::uint64_t>(timeSpec.tv_sec) * 1000000ULL
         + static_cast<std::uint64_t>(timeSpec.tv_nsec) / 1000ULL;
 }
@@ -49,6 +40,7 @@ static std::uint64_t getMonotonicTimeUs()
  * @brief コンストラクタ
  */
 Dht11Sensor::Dht11Sensor(unsigned int gpioPin)
+    // GPIO番号、未オープン状態、未確保状態を設定する
     : m_gpioPin(gpioPin),
       m_gpioHandle(-1),
       m_gpioClaimed(false)
@@ -60,8 +52,10 @@ Dht11Sensor::Dht11Sensor(unsigned int gpioPin)
  */
 Dht11Sensor::~Dht11Sensor()
 {
+    // 確保中のGPIOを解放する
     releaseGpio();
 
+    // GPIOチップがオープンされている場合は閉じる
     if (m_gpioHandle >= 0)
     {
         lgGpiochipClose(m_gpioHandle);
@@ -74,14 +68,10 @@ Dht11Sensor::~Dht11Sensor()
  */
 bool Dht11Sensor::initialize()
 {
-    /*
-     * GPIOチップ0をオープンする。
-     *
-     * Raspberry Pi 4Bでは
-     * BCM GPIO14はgpiochip0に存在する。
-     */
+    // GPIOチップ0をオープンする
     m_gpioHandle = lgGpiochipOpen(0);
 
+    // GPIOチップのオープンに失敗した場合はエラーを出力する
     if (m_gpioHandle < 0)
     {
         std::cerr
@@ -89,26 +79,19 @@ bool Dht11Sensor::initialize()
             << "result="
             << m_gpioHandle
             << std::endl;
-
         return false;
     }
 
-    /*
-     * DHT11の信号線は通常HIGHで待機する。
-     */
+    // GPIOを出力として確保し、HIGHに設定する
     if (!configureOutput(1))
     {
         return false;
     }
 
-    /*
-     * Python版でも読み取り前に
-     * HIGH状態を100ms保持している。
-     *
-     * ここでも同じように100ms待つ。
-     */
+    // 信号線をHIGHにした状態で100ms待機する
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+    // GPIOの確保を解放する
     releaseGpio();
 
     std::cout
@@ -124,23 +107,23 @@ bool Dht11Sensor::initialize()
  */
 bool Dht11Sensor::configureOutput(int initialValue)
 {
+    // GPIOチップがオープンされていない場合は失敗とする
     if (m_gpioHandle < 0)
     {
         return false;
     }
 
-    /*
-     * 既にGPIOを確保している場合は、
-     * 一度解放する。
-     */
+    // 既に確保されているGPIOを解放する
     releaseGpio();
 
+    // 指定した初期値でGPIOを出力として確保する
     const int result = lgGpioClaimOutput(
         m_gpioHandle,
         0,
         m_gpioPin,
         initialValue);
 
+    // GPIOの確保に失敗した場合はエラーを出力する
     if (result < 0)
     {
         std::cerr
@@ -154,6 +137,7 @@ bool Dht11Sensor::configureOutput(int initialValue)
         return false;
     }
 
+    // GPIOを確保済みの状態に設定する
     m_gpioClaimed = true;
 
     return true;
@@ -164,22 +148,22 @@ bool Dht11Sensor::configureOutput(int initialValue)
  */
 bool Dht11Sensor::configureInput()
 {
+    // GPIOチップがオープンされていない場合は失敗とする
     if (m_gpioHandle < 0)
     {
         return false;
     }
 
-    /*
-     * 出力として確保されていた場合は
-     * 一度解放する。
-     */
+    // 既に確保されているGPIOを解放する
     releaseGpio();
 
+    // GPIOを入力として確保する
     const int result = lgGpioClaimInput(
         m_gpioHandle,
         0,
         m_gpioPin);
 
+    // GPIOの確保に失敗した場合はエラーを出力する
     if (result < 0)
     {
         std::cerr
@@ -193,6 +177,7 @@ bool Dht11Sensor::configureInput()
         return false;
     }
 
+    // GPIOを確保済みの状態に設定する
     m_gpioClaimed = true;
 
     return true;
@@ -203,15 +188,18 @@ bool Dht11Sensor::configureInput()
  */
 void Dht11Sensor::releaseGpio()
 {
+    // GPIOチップがオープンされていない場合は何もせずに戻る
     if (m_gpioHandle < 0)
     {
         return;
     }
 
+    // GPIOを確保している場合は解放する
     if (m_gpioClaimed)
     {
         lgGpioFree(m_gpioHandle, m_gpioPin);
 
+        // GPIOを未確保の状態に設定する
         m_gpioClaimed = false;
     }
 }
@@ -221,57 +209,28 @@ void Dht11Sensor::releaseGpio()
  */
 bool Dht11Sensor::readRawData(std::uint8_t data[5])
 {
+    // データ格納先が無効な場合は失敗とする
     if (data == nullptr)
     {
         return false;
     }
 
-    /*
-     * 5バイトを初期化する。
-     */
+    // 受信データを格納する5バイトを0で初期化する
     for (int i = 0; i < 5; ++i)
     {
         data[i] = 0;
     }
 
-    /*
-     * --------------------------------------------------
-     * 1. GPIOを出力LOWにする
-     * --------------------------------------------------
-     */
+    // GPIOを出力LOWに設定する
     if (!configureOutput(0))
     {
         return false;
     }
 
-    /*
-     * --------------------------------------------------
-     * 2. LOWを18ms保持する
-     *
-     * Python版の
-     *
-     * dhtpin.value = False
-     * time.sleep(self._trig_wait / 1000000)
-     *
-     * に相当する。
-     * --------------------------------------------------
-     */
+    // LOW状態を18ms保持してセンサーへ通信開始を通知する
     std::this_thread::sleep_for(std::chrono::milliseconds(18));
 
-    /*
-     * --------------------------------------------------
-     * 3. GPIOを解放する
-     *
-     * Python版では、
-     *
-     * dhtpin.direction = Direction.INPUT
-     *
-     * によってセンサ側へ信号線を渡している。
-     *
-     * ここではlgpioのGPIO確保を解放した後、
-     * 入力として再確保する。
-     * --------------------------------------------------
-     */
+    // GPIOの確保を解放してから入力として確保し直す
     releaseGpio();
 
     if (!configureInput())
@@ -279,65 +238,37 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    /*
-     * --------------------------------------------------
-     * 4. GPIO状態を高速ポーリングする
-     *
-     * ここが今回の重要部分。
-     *
-     * Python版は、
-     *
-     * while time.monotonic() - timestamp < 0.25:
-     *     if dhtval != dhtpin.value:
-     *         ...
-     *
-     * としている。
-     *
-     * C++でもsleep_for(1us)などは入れず、
-     * GPIO状態を連続して読み取る。
-     * --------------------------------------------------
-     */
-
+    // GPIO状態変化の記録先を用意する
     std::vector<GpioTransition> transitions;
 
+    // 状態変化情報を格納する領域をあらかじめ確保する
     transitions.reserve(100);
 
-    /*
-     * 読み取り開始時刻。
-     */
+    // GPIO状態の監視開始時刻を取得する
     const std::uint64_t startTime = getMonotonicTimeUs();
 
-    /*
-     * Python版と同じく、
-     * 最大250ms監視する。
-     */
+    // GPIO状態の監視タイムアウトを250msに設定する
     constexpr std::uint64_t TIMEOUT_US = 250000ULL;
 
-    /*
-     * 現在認識しているGPIO状態。
-     *
-     * DHT11は待機時HIGHなので、
-     * 最初はHIGHとする。
-     */
+    // 監視開始時点のGPIO状態をHIGHとして設定する
     int previousLevel = 1;
 
+    // GPIO状態の変化を監視する
     while (true)
     {
+        // 現在時刻を取得する
         const std::uint64_t currentTime = getMonotonicTimeUs();
 
-        /*
-         * 250msを超えたらタイムアウト。
-         */
+        // 監視開始から250ms経過した場合はループを終了する
         if ((currentTime - startTime) >= TIMEOUT_US)
         {
             break;
         }
 
-        /*
-         * GPIO状態を取得する。
-         */
+        // GPIOの現在のレベルを読み取る
         const int level = lgGpioRead(m_gpioHandle, m_gpioPin);
 
+        // GPIOの読み取りに失敗した場合はエラーを出力する
         if (level < 0)
         {
             std::cerr
@@ -346,38 +277,28 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
                 << level
                 << std::endl;
 
+            // GPIOを解放してから失敗を返す
             releaseGpio();
 
             return false;
         }
 
-        /*
-         * GPIO状態が変化した場合だけ、
-         * 変化した時刻を記録する。
-         */
+        // 前回読み取った状態と異なる場合は状態変化を記録する
         if (level != previousLevel)
         {
+            // 状態変化後のレベルと発生時刻を記録する
             GpioTransition transition{};
 
             transition.level = level;
             transition.timestamp = currentTime;
 
+            // 状態変化情報を配列へ追加する
             transitions.push_back(transition);
 
+            // 次回比較用のGPIO状態を更新する
             previousLevel = level;
 
-            /*
-             * DHT11の通信は、
-             *
-             * 応答
-             * + 40bit
-             *
-             * なので80～90程度のエッジが
-             * 取得できれば十分。
-             *
-             * 余計な待ち時間を減らすため、
-             * 100個を上限とする。
-             */
+            // 状態変化の記録数が100件に達した場合は監視を終了する
             if (transitions.size() >= 100)
             {
                 break;
@@ -385,11 +306,10 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         }
     }
 
+    // GPIO状態の監視終了後にGPIOを解放する
     releaseGpio();
 
-    /*
-     * エッジが少なすぎる場合は失敗。
-     */
+    // 記録された状態変化が2件未満の場合は失敗とする
     if (transitions.size() < 2)
     {
         std::cerr
@@ -399,44 +319,31 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    /*
-     * --------------------------------------------------
-     * 5. HIGHパルス幅を取り出す
-     *
-     * DHT11のデータは、
-     *
-     * LOW 約50us
-     * HIGH 約26～28us → 0
-     * HIGH 約70us     → 1
-     *
-     * という形式。
-     *
-     * HIGHになった時刻から
-     * 次にLOWになった時刻までを測定する。
-     * --------------------------------------------------
-     */
+    // HIGHパルス幅を格納する配列を用意する
     std::vector<std::uint64_t> highPulses;
 
+    // 40bit分のパルス幅を格納できる領域を確保する
     highPulses.reserve(50);
 
+    // HIGHパルスの計測中かどうかを管理する
     bool highActive = false;
+
+    // HIGHになった時刻を保持する
     std::uint64_t highStart = 0;
 
+    // 記録したGPIO状態変化を順番に処理する
     for (const auto& transition : transitions)
     {
-        /*
-         * LOW → HIGH
-         */
+        // GPIOがHIGHになった場合はパルス開始時刻を記録する
         if (transition.level == 1)
         {
             highActive = true;
             highStart = transition.timestamp;
         }
-        /*
-         * HIGH → LOW
-         */
+        // GPIOがLOWになった場合はHIGHパルス幅を計算する
         else if (transition.level == 0)
         {
+            // HIGHパルスの計測中であればパルス幅を記録する
             if (highActive)
             {
                 const std::uint64_t pulseWidth =
@@ -444,15 +351,13 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
 
                 highPulses.push_back(pulseWidth);
 
+                // HIGHパルスの計測状態を解除する
                 highActive = false;
             }
         }
     }
 
-    /*
-     * DHT11の40bit分のHIGHパルスが
-     * 必要。
-     */
+    // 40bit分のHIGHパルスが取得できていない場合は失敗とする
     if (highPulses.size() < 40)
     {
         std::cerr
@@ -464,138 +369,20 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    /*
-     * --------------------------------------------------
-     * 6. 最後の40個を使用する
-     *
-     * Python版でも取得したtransitionの
-     * 後半を使用する実装になっている。
-     *
-     * DHT11の応答開始部分を取りこぼした場合にも、
-     * データ部分を利用しやすくする。
-     * --------------------------------------------------
-     */
+    // 取得したパルス列の末尾40個をデータ変換対象にする
     const std::size_t startIndex = highPulses.size() - 40;
 
-    /*
-     * --------------------------------------------------
-     * 7. 40bitを5バイトへ変換する
-     * --------------------------------------------------
-     */
+    // 40個のHIGHパルスを順番に処理してデータへ変換する
     for (int bitIndex = 0; bitIndex < 40; ++bitIndex)
     {
+        // 対象となるHIGHパルスの幅を取得する
         const std::uint64_t pulseWidth =
             highPulses[
                 startIndex +
                 static_cast<std::size_t>(bitIndex)];
 
-        /*
-         * 0:
-         *   約26～28us
-         *
-         * 1:
-         *   約70us
-         *
-         * 40usを境界値とする。
-         */
+        // HIGHパルス幅が40usを超える場合は1、それ以外は0とする
         const bool bitValue = pulseWidth > 40;
 
+        // 対象ビットを格納するバイト番号を計算する
         const int byteIndex = bitIndex / 8;
-
-        const int bitPosition = 7 - (bitIndex % 8);
-
-        if (bitValue)
-        {
-            data[byteIndex] |= static_cast<std::uint8_t>(
-                1U << bitPosition);
-        }
-    }
-
-    return true;
-}
-
-/**
- * @brief DHT11チェックサムを確認する
- */
-bool Dht11Sensor::checkChecksum(const std::uint8_t data[5]) const
-{
-    const std::uint8_t checksum = static_cast<std::uint8_t>(
-        data[0]
-        + data[1]
-        + data[2]
-        + data[3]);
-
-    return checksum == data[4];
-}
-
-/**
- * @brief DHT11から温度・湿度を取得する
- */
-bool Dht11Sensor::read(float& temperature, float& humidity)
-{
-    std::uint8_t data[5] = {};
-
-    /*
-     * DHT11から40bitを取得する。
-     */
-    if (!readRawData(data))
-    {
-        return false;
-    }
-
-    /*
-     * チェックサム確認。
-     */
-    if (!checkChecksum(data))
-    {
-        std::cerr
-            << "DHT11 checksum error."
-            << std::endl;
-
-        return false;
-    }
-
-    /*
-     * DHT11データフォーマット
-     *
-     * data[0] : 湿度整数部
-     * data[1] : 湿度小数部
-     * data[2] : 温度整数部
-     * data[3] : 温度小数部
-     * data[4] : チェックサム
-     */
-    humidity =
-        static_cast<float>(data[0])
-        +
-        static_cast<float>(data[1]) / 10.0f;
-
-    temperature =
-        static_cast<float>(data[2])
-        +
-        static_cast<float>(data[3]) / 10.0f;
-
-    /*
-     * 値の範囲確認。
-     */
-    if (temperature < -40.0f ||
-        temperature > 80.0f)
-    {
-        std::cerr
-            << "DHT11 temperature range error."
-            << std::endl;
-
-        return false;
-    }
-
-    if (humidity < 0.0f ||
-        humidity > 100.0f)
-    {
-        std::cerr
-            << "DHT11 humidity range error."
-            << std::endl;
-
-        return false;
-    }
-
-    return true;
-}

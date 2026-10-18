@@ -1,9 +1,9 @@
 #ifndef CLOUDFLARE_CLIENT_H
 #define CLOUDFLARE_CLIENT_H
 
-#include "common/SensorData.h"
+#include "common/SensorData.h"  // Cloudflare Workerへ送信するセンサデータの型を使用する
 
-#include <string>
+#include <string>  // Worker URLとShared Secretを文字列として保持する
 
 /**
  * @brief Cloudflare WorkerとのHTTP通信を担当するクラス

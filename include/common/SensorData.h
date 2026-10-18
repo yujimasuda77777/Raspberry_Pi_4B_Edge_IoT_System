@@ -1,7 +1,7 @@
 #ifndef SENSOR_DATA_H
 #define SENSOR_DATA_H
 
-#include <cstdint>
+#include <cstdint>  // std::int64_t型とstd::uint64_t型を使用する
 
 /**
  * @brief センサーデータ
