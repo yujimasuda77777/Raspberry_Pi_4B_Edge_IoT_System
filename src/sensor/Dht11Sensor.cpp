@@ -8,30 +8,33 @@
 #include <thread>       // 指定時間だけ処理を待機させる
 #include <vector>       // GPIO状態変化とパルス幅を可変長配列に格納する
 
-// GPIOの状態と、その状態に変化した時刻を保持する構造体
+
+/**
+ * @brief GPIO状態変化情報
+ */
 struct GpioTransition
 {
-    // GPIOの電圧レベル（0 = LOW、1 = HIGH）
+    // GPIOの状態（0：LOW、1：HIGH）
     int level;
 
-    // GPIOの状態変化が発生した時刻（マイクロ秒）
+    // 状態変化が発生した時刻（マイクロ秒）
     std::uint64_t timestamp;
 };
 
 /**
- * @brief 現在時刻をマイクロ秒で取得する
+ * @brief 単調増加時計から現在時刻をマイクロ秒単位で取得する
  *
- * @return 現在時刻[us]
+ * @return 現在時刻（マイクロ秒）
  */
 static std::uint64_t getMonotonicTimeUs()
 {
-    // 秒とナノ秒を格納する時刻構造体を初期化する
+    // 秒とナノ秒で時刻を取得するための構造体
     struct timespec timeSpec{};
 
-    // システム起動後の経過時間を取得する
+    // 単調増加時計から現在時刻を取得する
     clock_gettime(CLOCK_MONOTONIC, &timeSpec);
 
-    // 秒をマイクロ秒へ変換し、ナノ秒から変換した値を加算する
+    // 秒とナノ秒をマイクロ秒に換算して合算する
     return static_cast<std::uint64_t>(timeSpec.tv_sec) * 1000000ULL
         + static_cast<std::uint64_t>(timeSpec.tv_nsec) / 1000ULL;
 }
@@ -40,7 +43,7 @@ static std::uint64_t getMonotonicTimeUs()
  * @brief コンストラクタ
  */
 Dht11Sensor::Dht11Sensor(unsigned int gpioPin)
-    // GPIO番号、未オープン状態、未確保状態を設定する
+    // GPIO番号、GPIOチップのハンドル、GPIOの確保状態を初期化する
     : m_gpioPin(gpioPin),
       m_gpioHandle(-1),
       m_gpioClaimed(false)
@@ -55,10 +58,12 @@ Dht11Sensor::~Dht11Sensor()
     // 確保中のGPIOを解放する
     releaseGpio();
 
-    // GPIOチップがオープンされている場合は閉じる
+    // GPIOチップのハンドルが有効な場合は閉じる
     if (m_gpioHandle >= 0)
     {
         lgGpiochipClose(m_gpioHandle);
+
+        // 解放済みを示す値に更新する
         m_gpioHandle = -1;
     }
 }
@@ -71,7 +76,7 @@ bool Dht11Sensor::initialize()
     // GPIOチップ0をオープンする
     m_gpioHandle = lgGpiochipOpen(0);
 
-    // GPIOチップのオープンに失敗した場合はエラーを出力する
+    // GPIOチップをオープンできなかった場合はエラーを出力する
     if (m_gpioHandle < 0)
     {
         std::cerr
@@ -79,21 +84,23 @@ bool Dht11Sensor::initialize()
             << "result="
             << m_gpioHandle
             << std::endl;
+
         return false;
     }
 
-    // GPIOを出力として確保し、HIGHに設定する
+    // GPIOを出力に設定し、HIGHを出力する
     if (!configureOutput(1))
     {
         return false;
     }
 
-    // 信号線をHIGHにした状態で100ms待機する
+    // 信号線をHIGHにした状態で100ミリ秒待機する
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // GPIOの確保を解放する
+    // GPIOの確保を解除する
     releaseGpio();
 
+    // 初期化結果と使用するGPIO番号を出力する
     std::cout
         << "DHT11 initialized. GPIO="
         << m_gpioPin
@@ -107,23 +114,23 @@ bool Dht11Sensor::initialize()
  */
 bool Dht11Sensor::configureOutput(int initialValue)
 {
-    // GPIOチップがオープンされていない場合は失敗とする
+    // GPIOチップのハンドルが無効な場合は処理を終了する
     if (m_gpioHandle < 0)
     {
         return false;
     }
 
-    // 既に確保されているGPIOを解放する
+    // 既に確保しているGPIOを解放する
     releaseGpio();
 
-    // 指定した初期値でGPIOを出力として確保する
+    // GPIOを出力として確保し、初期出力値を設定する
     const int result = lgGpioClaimOutput(
         m_gpioHandle,
         0,
         m_gpioPin,
         initialValue);
 
-    // GPIOの確保に失敗した場合はエラーを出力する
+    // GPIOの確保に失敗した場合はエラー情報を出力する
     if (result < 0)
     {
         std::cerr
@@ -137,7 +144,7 @@ bool Dht11Sensor::configureOutput(int initialValue)
         return false;
     }
 
-    // GPIOを確保済みの状態に設定する
+    // GPIOを確保済みの状態にする
     m_gpioClaimed = true;
 
     return true;
@@ -148,13 +155,13 @@ bool Dht11Sensor::configureOutput(int initialValue)
  */
 bool Dht11Sensor::configureInput()
 {
-    // GPIOチップがオープンされていない場合は失敗とする
+    // GPIOチップのハンドルが無効な場合は処理を終了する
     if (m_gpioHandle < 0)
     {
         return false;
     }
 
-    // 既に確保されているGPIOを解放する
+    // 既に確保しているGPIOを解放する
     releaseGpio();
 
     // GPIOを入力として確保する
@@ -163,7 +170,7 @@ bool Dht11Sensor::configureInput()
         0,
         m_gpioPin);
 
-    // GPIOの確保に失敗した場合はエラーを出力する
+    // GPIOの確保に失敗した場合はエラー情報を出力する
     if (result < 0)
     {
         std::cerr
@@ -177,7 +184,7 @@ bool Dht11Sensor::configureInput()
         return false;
     }
 
-    // GPIOを確保済みの状態に設定する
+    // GPIOを確保済みの状態にする
     m_gpioClaimed = true;
 
     return true;
@@ -188,7 +195,7 @@ bool Dht11Sensor::configureInput()
  */
 void Dht11Sensor::releaseGpio()
 {
-    // GPIOチップがオープンされていない場合は何もせずに戻る
+    // GPIOチップのハンドルが無効な場合は処理を終了する
     if (m_gpioHandle < 0)
     {
         return;
@@ -199,7 +206,7 @@ void Dht11Sensor::releaseGpio()
     {
         lgGpioFree(m_gpioHandle, m_gpioPin);
 
-        // GPIOを未確保の状態に設定する
+        // GPIOの確保状態を未確保に更新する
         m_gpioClaimed = false;
     }
 }
@@ -209,13 +216,13 @@ void Dht11Sensor::releaseGpio()
  */
 bool Dht11Sensor::readRawData(std::uint8_t data[5])
 {
-    // データ格納先が無効な場合は失敗とする
+    // データ格納先が指定されていない場合は処理を終了する
     if (data == nullptr)
     {
         return false;
     }
 
-    // 受信データを格納する5バイトを0で初期化する
+    // データ格納用の5バイトを0で初期化する
     for (int i = 0; i < 5; ++i)
     {
         data[i] = 0;
@@ -227,45 +234,46 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    // LOW状態を18ms保持してセンサーへ通信開始を通知する
+    // LOWを18ミリ秒保持してDHT11に応答を要求する
     std::this_thread::sleep_for(std::chrono::milliseconds(18));
 
-    // GPIOの確保を解放してから入力として確保し直す
+    // GPIOの出力設定を解除する
     releaseGpio();
 
+    // GPIOを入力に設定してDHT11からの信号を読み取る
     if (!configureInput())
     {
         return false;
     }
 
-    // GPIO状態変化の記録先を用意する
+    // GPIOの状態変化を時刻とともに記録する配列を用意する
     std::vector<GpioTransition> transitions;
 
-    // 状態変化情報を格納する領域をあらかじめ確保する
+    // 状態変化を最大100個記録できる容量を確保する
     transitions.reserve(100);
 
-    // GPIO状態の監視開始時刻を取得する
+    // GPIO状態の監視を開始する時刻を取得する
     const std::uint64_t startTime = getMonotonicTimeUs();
 
-    // GPIO状態の監視タイムアウトを250msに設定する
+    // GPIOの監視時間を250ミリ秒に設定する
     constexpr std::uint64_t TIMEOUT_US = 250000ULL;
 
-    // 監視開始時点のGPIO状態をHIGHとして設定する
+    // GPIOの初期状態をHIGHとして設定する
     int previousLevel = 1;
 
-    // GPIO状態の変化を監視する
+    // タイムアウトまたは記録数の上限に達するまでGPIOを監視する
     while (true)
     {
         // 現在時刻を取得する
         const std::uint64_t currentTime = getMonotonicTimeUs();
 
-        // 監視開始から250ms経過した場合はループを終了する
+        // 監視開始から250ミリ秒経過した場合はループを終了する
         if ((currentTime - startTime) >= TIMEOUT_US)
         {
             break;
         }
 
-        // GPIOの現在のレベルを読み取る
+        // GPIOの現在の状態を読み取る
         const int level = lgGpioRead(m_gpioHandle, m_gpioPin);
 
         // GPIOの読み取りに失敗した場合はエラーを出力する
@@ -277,28 +285,31 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
                 << level
                 << std::endl;
 
-            // GPIOを解放してから失敗を返す
+            // GPIOを解放して読み取り処理を終了する
             releaseGpio();
 
             return false;
         }
 
-        // 前回読み取った状態と異なる場合は状態変化を記録する
+        // 前回の読み取りからGPIO状態が変化した場合に記録する
         if (level != previousLevel)
         {
-            // 状態変化後のレベルと発生時刻を記録する
+            // 状態変化情報を生成する
             GpioTransition transition{};
 
+            // 変化後のGPIOレベルを記録する
             transition.level = level;
+
+            // 状態変化を検出した時刻を記録する
             transition.timestamp = currentTime;
 
-            // 状態変化情報を配列へ追加する
+            // 状態変化情報を配列の末尾に追加する
             transitions.push_back(transition);
 
-            // 次回比較用のGPIO状態を更新する
+            // 次回の比較に使用するGPIOレベルを更新する
             previousLevel = level;
 
-            // 状態変化の記録数が100件に達した場合は監視を終了する
+            // 状態変化の記録数が100個に達した場合は監視を終了する
             if (transitions.size() >= 100)
             {
                 break;
@@ -306,10 +317,10 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         }
     }
 
-    // GPIO状態の監視終了後にGPIOを解放する
+    // GPIOの監視が終了したため、GPIOを解放する
     releaseGpio();
 
-    // 記録された状態変化が2件未満の場合は失敗とする
+    // 状態変化の記録が2個未満の場合は読み取り失敗とする
     if (transitions.size() < 2)
     {
         std::cerr
@@ -319,10 +330,10 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    // HIGHパルス幅を格納する配列を用意する
+    // GPIO状態の変化履歴からHIGHパルス幅を保存する配列を用意する
     std::vector<std::uint64_t> highPulses;
 
-    // 40bit分のパルス幅を格納できる領域を確保する
+    // 40bit分のパルス幅を記録できる容量を確保する
     highPulses.reserve(50);
 
     // HIGHパルスの計測中かどうかを管理する
@@ -331,24 +342,26 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
     // HIGHになった時刻を保持する
     std::uint64_t highStart = 0;
 
-    // 記録したGPIO状態変化を順番に処理する
+    // 記録したGPIO状態変化を先頭から順に処理する
     for (const auto& transition : transitions)
     {
-        // GPIOがHIGHになった場合はパルス開始時刻を記録する
+        // GPIOがHIGHになった場合はパルスの開始時刻を記録する
         if (transition.level == 1)
         {
             highActive = true;
             highStart = transition.timestamp;
         }
-        // GPIOがLOWになった場合はHIGHパルス幅を計算する
+        // GPIOがLOWになった場合はHIGHパルスの終了時刻として扱う
         else if (transition.level == 0)
         {
-            // HIGHパルスの計測中であればパルス幅を記録する
+            // HIGHパルスの開始時刻が記録されている場合に幅を計算する
             if (highActive)
             {
+                // HIGH開始からLOWへの変化までの経過時間を計算する
                 const std::uint64_t pulseWidth =
                     transition.timestamp - highStart;
 
+                // 計算したパルス幅を配列に追加する
                 highPulses.push_back(pulseWidth);
 
                 // HIGHパルスの計測状態を解除する
@@ -357,7 +370,7 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         }
     }
 
-    // 40bit分のHIGHパルスが取得できていない場合は失敗とする
+    // HIGHパルスが40個未満の場合はデータ不足として処理を終了する
     if (highPulses.size() < 40)
     {
         std::cerr
@@ -369,20 +382,123 @@ bool Dht11Sensor::readRawData(std::uint8_t data[5])
         return false;
     }
 
-    // 取得したパルス列の末尾40個をデータ変換対象にする
+    // HIGHパルス配列の末尾40個を取り出すための開始位置を求める
     const std::size_t startIndex = highPulses.size() - 40;
 
-    // 40個のHIGHパルスを順番に処理してデータへ変換する
+    // 40個のHIGHパルスを順に処理して5バイトのデータへ変換する
     for (int bitIndex = 0; bitIndex < 40; ++bitIndex)
     {
-        // 対象となるHIGHパルスの幅を取得する
+        // 今回処理するビットに対応するHIGHパルス幅を取得する
         const std::uint64_t pulseWidth =
             highPulses[
                 startIndex +
                 static_cast<std::size_t>(bitIndex)];
 
-        // HIGHパルス幅が40usを超える場合は1、それ以外は0とする
+        // HIGHパルス幅が40マイクロ秒を超えていれば1、そうでなければ0と判定する
         const bool bitValue = pulseWidth > 40;
 
-        // 対象ビットを格納するバイト番号を計算する
+        // ビット番号から格納先のバイト番号を求める
         const int byteIndex = bitIndex / 8;
+
+        // バイト内の格納位置を上位ビットから順に求める
+        const int bitPosition = 7 - (bitIndex % 8);
+
+        // 判定結果が1の場合は対応するビットを立てる
+        if (bitValue)
+        {
+            data[byteIndex] |= static_cast<std::uint8_t>(
+                1U << bitPosition);
+        }
+    }
+
+    // 40bitのデータ取得が完了したことを通知する
+    return true;
+}
+
+/**
+ * @brief DHT11チェックサムを確認する
+ */
+bool Dht11Sensor::checkChecksum(const std::uint8_t data[5]) const
+{
+    // 先頭4バイトを加算して8ビットのチェックサム値を計算する
+    const std::uint8_t checksum = static_cast<std::uint8_t>(
+        data[0]
+        + data[1]
+        + data[2]
+        + data[3]);
+
+    // 計算した値と5バイト目のチェックサムを比較する
+    return checksum == data[4];
+}
+
+/**
+ * @brief DHT11から温度・湿度を取得する
+ */
+bool Dht11Sensor::read(float& temperature, float& humidity)
+{
+    // センサーから受信する5バイトのデータを0で初期化する
+    std::uint8_t data[5] = {};
+
+    // DHT11から40bitのデータを取得する
+    if (!readRawData(data))
+    {
+        return false;
+    }
+
+    // 受信データのチェックサムを検証する
+    if (!checkChecksum(data))
+    {
+        std::cerr
+            << "DHT11 checksum error."
+            << std::endl;
+
+        return false;
+    }
+
+    /*
+     * DHT11データフォーマット
+     *
+     * data[0] : 湿度整数部
+     * data[1] : 湿度小数部
+     * data[2] : 温度整数部
+     * data[3] : 温度小数部
+     * data[4] : チェックサム
+     */
+
+    // 湿度の整数部と小数部を合算して湿度を求める
+    humidity =
+        static_cast<float>(data[0])
+        +
+        static_cast<float>(data[1]) / 10.0f;
+
+    // 温度の整数部と小数部を合算して温度を求める
+    temperature =
+        static_cast<float>(data[2])
+        +
+        static_cast<float>(data[3]) / 10.0f;
+
+    // 温度が想定範囲外の場合はエラーとする
+    if (temperature < -40.0f ||
+        temperature > 80.0f)
+    {
+        std::cerr
+            << "DHT11 temperature range error."
+            << std::endl;
+
+        return false;
+    }
+
+    // 湿度が0～100%の範囲外の場合はエラーとする
+    if (humidity < 0.0f ||
+        humidity > 100.0f)
+    {
+        std::cerr
+            << "DHT11 humidity range error."
+            << std::endl;
+
+        return false;
+    }
+
+    // 温度と湿度の取得および検証が完了したことを通知する
+    return true;
+}
