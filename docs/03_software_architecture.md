@@ -197,7 +197,8 @@ Communication Process
 Sensor ProcessとCommunication Processを分離することで、一方のProcessに異常が発生した場合でも、もう一方のProcessを独立して再起動できる構成とする。
 
 ただし、Sensor Processが停止している場合は新規SensorDataが生成されず、Communication Processが停止している場合はQueueへデータが蓄積する。
-Communication Processの稼働状態はsystemdで確認する。また、Queueへの送信失敗などの異常はログに記録する。
+Sensor ProcessおよびCommunication Processの稼働状態はsystemdで確認する。
+また、Queueへの送信失敗などの異常はログに記録する。
 
 Queueの容量を超過した場合、Sensor Processからの新規データ送信は失敗する。
 
