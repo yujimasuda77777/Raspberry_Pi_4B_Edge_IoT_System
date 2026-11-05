@@ -94,6 +94,7 @@ Cloudflare D1は、Cloudflare Workerから受信したセンサーデータを�
 ### 7.7 Browserの責務
 
 Browserは、Cloudflare Workerを介してセンサーデータを参照する。
+現在値は、Cloudflare D1に保存されたセンサーデータのうち、最新のデータとする。
 
 主な表示対象は以下とする。
 

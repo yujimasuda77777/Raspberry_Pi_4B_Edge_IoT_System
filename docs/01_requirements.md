@@ -124,7 +124,7 @@ Browserは、Cloudflare Workerを介してCloudflare D1に保存されたセン�
 
 #### FR-006 現在値表示
 
-Browserは、温度および湿度の現在値を表示できること。
+Browserは、Cloudflare D1に保存されたセンサーデータのうち、最新のデータを現在値として表示できること。
 
 #### FR-007 履歴データ表示
 
