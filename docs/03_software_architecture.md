@@ -121,9 +121,12 @@ Sensor Processは、DHT11から温度・湿度を取得する。
 8. Shutdown処理
 
 DHT11からのデータ取得に失敗した場合は、SensorDataを生成せず、異常処理を行った後、次の取得周期へ進む。
+IPC Message Queueの作成に失敗した場合は、エラー内容をログに記録し、Sensor Processを異常終了させる。
+Queue作成の再試行はSensor Process内部では行わず、再起動はsystemdに委ねる。
 IPC Message Queueへの送信に失敗した場合、Queue Fullであれば対象のSensorDataを破棄し、次の取得周期へ進む。
 Queue Full以外の送信異常が発生した場合は、異常をログに記録し、次の取得周期へ進む。
 センサーデータ取得周期は5秒とする。Linux環境であるため、周期にはスケジューリング遅延が発生し得るものとする。
+
 
 ### 9.4 Communication Process
 
@@ -145,7 +148,14 @@ IPC Message QueueはSensor Processが作成する。
 Communication Processは既存のIPC Message Queueに接続する。
 
 Queueが存在しない場合は、一定時間待機した後、接続を再試行する。
+Queueへの接続に成功するまで、この処理を繰り返す。
 Queueへの接続に成功した後、SensorDataの受信処理を開始する。
+
+IPC Message QueueにSensorDataが存在しない場合は、次のSensorDataが到着するまで受信処理を待機する（Blocking方式）。
+SensorDataを取得した場合は、Cloudflare Workerへの送信処理を行う。
+
+送信処理完了後、次の送信処理を開始するまで1秒間待機する。
+Queueに複数のSensorDataが蓄積されている場合も、同じ送信間隔で順次処理する。
 
 Queueへの接続時にQueue不存在以外の異常が発生した場合は、異常として扱い、ログに記録する。
 
