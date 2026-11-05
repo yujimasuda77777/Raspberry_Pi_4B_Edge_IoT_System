@@ -146,9 +146,11 @@ Browserは、保存されたセンサーデータを時系列のグラフとし�
 
 #### NFR-002 データ送信周期
 
-取得したセンサーデータは、一定の周期でCloudflare Workerへ送信できること。
+QueueからSensorDataを1件取得し、Cloudflare Workerへ送信する。
 
-通信はQueueからSensorDataを取得した時点で送信を開始する。
+送信処理完了後、次の送信処理を開始するまで1秒間隔を設ける。
+
+Queueに複数のSensorDataが蓄積されている場合も、同じ送信間隔で順次送信する。
 
 #### NFR-003 通信応答時間
 

@@ -112,15 +112,17 @@ Sensor Processは、DHT11から温度・湿度を取得する。
 主な処理は以下とする。
 
 1. 初期化
-2. DHT11取得処理
-3. SensorData生成
-4. IPC Message Queueへの送信
-5. 異常処理
-6. 周期待機
-7. Shutdown処理
+2. IPC Message Queue作成
+3. DHT11取得処理
+4. SensorData生成
+5. IPC Message Queueへの送信
+6. 異常処理
+7. 周期待機
+8. Shutdown処理
 
 DHT11からのデータ取得に失敗した場合は、SensorDataを生成せず、異常処理を行った後、次の取得周期へ進む。
-IPC Message Queueへの送信に失敗した場合は、対象のSensorDataを破棄し、次の取得周期へ進む。
+IPC Message Queueへの送信に失敗した場合、Queue Fullであれば対象のSensorDataを破棄し、次の取得周期へ進む。
+Queue Full以外の送信異常が発生した場合は、異常をログに記録し、次の取得周期へ進む。
 センサーデータ取得周期は5秒とする。Linux環境であるため、周期にはスケジューリング遅延が発生し得るものとする。
 
 ### 9.4 Communication Process
@@ -130,12 +132,22 @@ Communication Processは、IPC Message QueueからSensorDataを取得し、Cloud
 主な処理は以下とする。
 
 1. 初期化
-2. IPC Message QueueからSensorData取得
-3. HTTP POST送信
-4. HTTP Response判定
-5. Retry / Backoff
-6. 送信結果記録
-7. Shutdown処理
+2. IPC Message Queue接続
+3. Queue不存在時の接続再試行
+4. IPC Message QueueからSensorData取得
+5. HTTP POST送信
+6. HTTP Response判定
+7. Retry / Backoff
+8. 送信結果記録
+9. Shutdown処理
+
+IPC Message QueueはSensor Processが作成する。
+Communication Processは既存のIPC Message Queueに接続する。
+
+Queueが存在しない場合は、一定時間待機した後、接続を再試行する。
+Queueへの接続に成功した後、SensorDataの受信処理を開始する。
+
+Queueへの接続時にQueue不存在以外の異常が発生した場合は、異常として扱い、ログに記録する。
 
 Retryを実施しても送信に失敗した場合は、対象のSensorDataを破棄し、送信結果を記録する。
 通信処理はSensor Processと独立して実行する。
@@ -199,3 +211,6 @@ systemdの詳細設定は19章で定義する。
 - Communication Processの通信遅延や異常終了は、Sensor Processの動作に直接影響しない
 - Queue容量超過時は、Sensor Processからの新規データ送信が失敗する
 - Retry終了後、送信に失敗したSensorDataは破棄する
+- IPC Message Queueの作成はSensor Processが担当する
+- Communication Processは既存のIPC Message Queueに接続する
+- Communication ProcessはQueue不存在時に接続を再試行する
