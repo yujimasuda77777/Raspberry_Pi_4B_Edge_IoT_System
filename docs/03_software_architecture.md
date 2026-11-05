@@ -14,7 +14,7 @@ Edge Applicationは、以下の論理的な機能要素から構成する。
 
 | ID | 機能要素 | 主な責務 |
 |---|---|---|
-| SW-001 | Application Control | アプリケーション全体の初期化、起動、終了を管理する |
+| SW-001 | Application Control | 各Process内部の初期化および終了処理を管理する |
 | SW-002 | Sensor | DHT11から温度・湿度データを取得する |
 | SW-003 | Data Processing | 取得したセンサーデータを処理する |
 | SW-004 | Data Management | センサーデータの一時保持および機能間の受け渡しを管理する |
