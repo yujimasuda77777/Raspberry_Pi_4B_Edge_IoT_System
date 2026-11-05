@@ -152,6 +152,9 @@ QueueからSensorDataを1件取得し、Cloudflare Workerへ送信する。
 
 Queueに複数のSensorDataが蓄積されている場合も、同じ送信間隔で順次送信する。
 
+Retry中の待機時間には、NFR-004で定義するRetry間隔を適用する。
+Retryを含む1件分の送信処理が完了した後、次のSensorDataの送信開始まで1秒間待機する。
+
 #### NFR-003 通信応答時間
 
 Cloudflare Workerへの通信に対して、適切なTimeoutを設定できること。
