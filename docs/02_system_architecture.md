@@ -19,8 +19,8 @@ Edge Application内部のProcess、Thread、Queue、IPCなどの具体的な構�
 | ID | 構成要素 | 主な責務 |
 |---|---|---|
 | SYS-001 | DHT11 | 温度・湿度データを提供する |
-| SYS-002 | Raspberry Pi 4B | Edge Deviceとしてセンサーデータを取得・処理・送信する |
-| SYS-003 | Edge Application | Raspberry Pi上でセンサーデータ処理および通信を行う |
+| SYS-002 | Raspberry Pi 4B | Edge Applicationの実行基盤となるハードウェアを提供する |
+| SYS-003 | Edge Application | DHT11からのデータ取得、センサーデータ処理、Cloudflare Workerへの送信を行う |
 | SYS-004 | Wi-Fi / Internet | Edge DeviceとCloudflare間の通信経路を提供する |
 | SYS-005 | Cloudflare Worker | センサーデータの受信およびD1とのデータ連携を行う |
 | SYS-006 | Cloudflare D1 | センサーデータを保存する |
@@ -64,7 +64,7 @@ Raspberry Pi 4B上のEdge Applicationは、以下の責務を持つ。
 * 取得したセンサーデータを処理する。
 * センサーデータをCloudflare Workerへ送信する。
 * 通信結果を処理する。
-* 必要に応じてセンサーデータを保持する。
+* 通信処理に必要な範囲でセンサーデータを一時的に保持する。
 * 異常発生時に適切な処理を行う。
 * 起動および終了時に必要な処理を行う。
 * 動作状況および異常状況をログへ記録する。
