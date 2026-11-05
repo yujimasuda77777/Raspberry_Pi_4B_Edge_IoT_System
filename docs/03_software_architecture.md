@@ -120,6 +120,7 @@ Sensor Processは、DHT11から温度・湿度を取得する。
 7. Shutdown処理
 
 DHT11からのデータ取得に失敗した場合は、SensorDataを生成せず、異常処理を行った後、次の取得周期へ進む。
+IPC Message Queueへの送信に失敗した場合は、対象のSensorDataを破棄し、次の取得周期へ進む。
 センサーデータ取得周期は5秒とする。Linux環境であるため、周期にはスケジューリング遅延が発生し得るものとする。
 
 ### 9.4 Communication Process
@@ -173,7 +174,8 @@ Communication Process
 
 Sensor ProcessとCommunication Processを分離することで、一方のProcessに異常が発生した場合でも、もう一方のProcessを独立して再起動できる構成とする。
 
-ただし、Sensor Processが停止している場合は新規SensorDataが生成されず、Communication Processが停止している場合はQueueへデータが蓄積する。この状態をsystemdおよびログで確認できる構成とする。
+ただし、Sensor Processが停止している場合は新規SensorDataが生成されず、Communication Processが停止している場合はQueueへデータが蓄積する。
+Communication Processの稼働状態はsystemdで確認する。また、Queueへの送信失敗などの異常はログに記録する。
 
 Queueの容量を超過した場合、Sensor Processからの新規データ送信は失敗する。
 
