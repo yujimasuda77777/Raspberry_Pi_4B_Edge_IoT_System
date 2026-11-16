@@ -23,7 +23,7 @@
 | Humidity    | 湿度             |
 | Timestamp   | センサーデータを取得した時刻 |
 
-センサーデータは、Sensor Threadから後続の処理へ渡される。
+センサーデータはSensor Processで取得され、POSIX Message Queueを介してCommunication Processへ渡される。
 
 ### 10.3 センサーデータ構造
 
@@ -47,16 +47,16 @@ Edge Application内部では、センサーデータを以下のSensorDataとし
 ```mermaid
 flowchart LR
     Sensor["DHT11"]
-    Acquire["Sensor Thread"]
-    Queue["Sensor Data Queue"]
-    Comm["Communication Thread"]
+    Acquire["Sensor Process"]
+    Queue["POSIX Message Queue"]
+    Comm["Communication Process"]
     Worker["Cloudflare Worker"]
     D1["Cloudflare D1"]
 
     Sensor -->|温度・湿度| Acquire
     Acquire -->|SensorData| Queue
     Queue -->|SensorData| Comm
-    Comm -->|HTTP| Worker
+    Comm -->|HTTPS POST| Worker
     Worker -->|保存| D1
 ```
 
@@ -102,7 +102,7 @@ Edge Application内部でのデータ保持については、通信障害時の�
 
 ### 10.8 データ設計上の方針
 
-データ構造は、Sensor Thread、Queue、Communication ThreadおよびCloudflare Workerの間で一貫して扱えるようにする。
+データ構造は、Sensor Process、POSIX Message Queue、Communication ProcessおよびCloudflare Workerの間で一貫して扱えるようにする。
 
 また、将来的にセンサー種類や測定項目が増加する可能性を考慮し、特定のセンサー実装に過度に依存しないデータ構造とする。
 
@@ -230,7 +230,7 @@ Communication Processは、DHT11へ直接アクセスしない。
 
 ### 11.6 IPC方式
 
-Process間のデータ受け渡しには、Queueとして利用可能なIPC方式を採用する。
+Process間のデータ受け渡しに使用するIPC方式について、以下の候補を比較する。
 
 IPC方式の候補として、以下を比較する。
 
@@ -276,7 +276,8 @@ IPC QueueにはSensorDataを格納する。
 SensorData
 ├── temperature
 ├── humidity
-└── timestamp
+├── timestamp
+└── data_id
 ```
 
 Process間でデータを受け渡すため、IPCで扱うデータ形式はProcess間で明確に定義する必要がある。
@@ -420,7 +421,7 @@ Process間の起動順序、IPC Queueの生成・削除、停止順序および�
 
 ### 11.16 IPCのメリット
 
-Process間IPCを採用することで、以下のメリットが得られる。
+Sensor ProcessとCommunication Processを分離し、Process間IPCで連携することで、以下のメリットが得られる。
 
 * Process単位で障害を分離できる
 * Sensor処理と通信処理を独立させられる
@@ -431,7 +432,7 @@ Process間IPCを採用することで、以下のメリットが得られる。
 
 ### 11.17 IPCのデメリット
 
-一方で、Thread間Queueと比較して以下のデメリットがある。
+一方で、Sensor ProcessとCommunication Processを分離し、Process間IPCで連携する構成には、以下のデメリットがある。
 
 * IPCの実装が必要になる
 * Process間のデータ形式を定義する必要がある
@@ -446,21 +447,21 @@ Process間IPCを採用することで、以下のメリットが得られる。
 
 以下の構成を基本方針とする。
 
-| 項目              | 方針                    |
-| --------------- | --------------------- |
-| Sensor処理        | Sensor Process        |
-| Communication処理 | Communication Process |
-| Process間通信      | IPC                   |
-| IPC方式           | Message Queueとする |
-| Producer        | Sensor Process        |
-| Consumer        | Communication Process |
-| データ単位           | SensorData            |
-| データ順序           | FIFO                  |
-| Queue容量         | 有限容量                  |
-| Queue Empty     | 待機方式                  |
-| Queue Full      | 無期限待機しない              |
-| Process間メモリ共有   | 直接共有しない               |
-| Process監視       | systemdと連携する   |
+| 項目              | 方針                         |
+| --------------- | -------------------------- |
+| Sensor処理        | Sensor Process             |
+| Communication処理 | Communication Process      |
+| Process間通信      | IPC                        |
+| IPC方式           | Message Queueとする           |
+| Producer        | Sensor Process             |
+| Consumer        | Communication Process      |
+| データ単位           | SensorData                 |
+| データ順序           | FIFO                       |
+| Queue容量         | 100件                       |
+| Queue Empty     | データ到着までブロッキング待機             |
+| Queue Full      | 新規SensorDataを破棄する          |
+| Process間メモリ共有   | 直接共有しない                    |
+| Process監視       | systemdと連携する               |
 
 ### 11.19 Queue / IPC設計の決定事項
 
@@ -468,7 +469,7 @@ Process間IPCを採用することで、以下のメリットが得られる。
 - Queue容量は100件とする
 - Queue Full時は新規SensorDataを破棄する
 - Queue Full時にSensor Processを無期限待機させない
-- Queueへのデータ順序はSensorData生成順を基本とする
+- Queueからのデータ取り出し順序はFIFOとする
 - Process間のメモリ共有は行わず、Message Queueをインターフェースとする
 - Queueの永続化は行わない
 
@@ -478,11 +479,11 @@ Process間IPCを採用することで、以下のメリットが得られる。
 
 本システムでは、DHT11からのセンサーデータ取得およびCloudflare Workerへのデータ送信を継続的に実行する。
 
-Sensor ProcessとCommunication Processは、それぞれ異なる処理特性を持つため、処理周期およびタイミングを分離して設計する。
+Sensor ProcessとCommunication Processは、それぞれ異なる処理特性を持つため、処理タイミングを分離して設計する。
 
 Sensor Processは一定周期でDHT11からセンサーデータを取得する。
 
-Communication ProcessはIPC Queueに格納されたセンサーデータを受信し、Cloudflare Workerへ送信する。
+Communication ProcessはIPC Queueからのデータ到着を待機し、SensorDataを受信したらCloudflare Workerへ送信する。
 
 周期値、Timeout、RetryおよびBackoffは、本章で定義する。
 
@@ -498,17 +499,25 @@ Linux環境であるため、実際の取得時刻にはスケジューリング
 
 Sensor Processでは、以下の処理を1周期の基本単位とする。
 
+### 12.3 センサーデータ取得処理
+
+Sensor Processでは、以下の処理を1周期の基本単位とする。
+
 ```mermaid
 flowchart LR
     Wait["取得周期待機"]
     Read["DHT11読み取り"]
     Check["データ妥当性確認"]
+    Valid{"データ正常？"}
     Create["SensorData生成"]
     Send["IPCへ送信"]
+    Error["異常処理"]
 
     Wait --> Read
     Read --> Check
-    Check --> Create
+    Check --> Valid
+    Valid -->|正常| Create
+    Valid -->|異常| Error
     Create --> Send
     Send --> Wait
 ```
@@ -534,7 +543,11 @@ flowchart LR
 [取得]                    [取得]
 ```
 
-本システムでは、センサーデータを5秒周期で取得する。周期処理はLinux上の周期待機を使用し、ハードリアルタイム性は要求しない。
+本システムでは、
+- 5秒周期は、前回の取得開始時刻を基準とする。
+- 処理時間による周期ずれが累積しない方式を採用する。
+- Linuxのスケジューリング遅延による多少の遅れは許容する。
+- ハードリアルタイム性は要求しない。
 
 ### 12.5 Communication Processの処理方式
 
@@ -553,15 +566,17 @@ sequenceDiagram
     participant Comm as Communication Process
     participant Worker as Cloudflare Worker
 
-    loop センサー取得周期
-        Sensor->>Sensor: DHT11読み取り
-        Sensor->>IPC: SensorData送信
-    end
-
-    loop 通信処理
-        Comm->>IPC: SensorData受信
-        Comm->>Worker: HTTP送信
-        Worker-->>Comm: HTTP応答
+    par センサー取得処理
+        loop センサー取得周期
+            Sensor->>Sensor: DHT11読み取り
+            Sensor->>IPC: SensorData送信
+        end
+    and 通信処理
+        loop 通信処理
+            Comm->>IPC: SensorData受信
+            Comm->>Worker: HTTP送信
+            Worker-->>Comm: HTTP応答
+        end
     end
 ```
 
@@ -600,7 +615,7 @@ flowchart LR
 
 この状態が一時的であれば、Queueによって吸収する。
 
-通信遅延が長期化した場合には、Queue容量を超える可能性があるため、Queue Full処理およびデータ保持方式が必要となる。
+通信遅延が長期化した場合には、Queue容量100件を超える可能性がある。Queue Full時には、第11章で定義したとおり、新規SensorDataを破棄する。
 
 ### 12.9 RetryおよびBackoffとの関係
 
@@ -609,36 +624,41 @@ flowchart LR
 Retry中はCommunication Processの処理時間が増加するため、IPC Queueへのデータ蓄積量が増加する可能性がある。
 
 ```mermaid
-flowchart LR
+flowchart TD
     Queue["IPC Queue"]
     Send["HTTP送信"]
     Check["結果確認"]
-    Retry["Retry"]
-    Backoff["Backoff"]
-    Success["成功"]
-    Error["失敗"]
+    Success["送信成功"]
+    RetryCheck{"Retry可能か"}
+    Backoff["Backoff待機"]
+    Discard["データ破棄"]
 
     Queue --> Send
     Send --> Check
 
     Check -->|成功| Success
-    Check -->|失敗| Error
-    Error --> Retry
-    Retry --> Backoff
+    Check -->|失敗| RetryCheck
+
+    RetryCheck -->|Retry可能| Backoff
     Backoff --> Send
+    RetryCheck -->|Retry不可・上限到達| Discard
 ```
+
+Retry回数、Backoff時間およびRetry対象となるエラーについては、13章「通信設計」で具体的に決定する。
 
 Retry回数、Backoff時間およびRetry対象となるエラーについては、13章「通信設計」で具体的に決定する。
 
 ### 12.10 周期とQueue容量の関係
 
-Sensor Processの取得周期をTs、Communication Processの平均処理時間をTcとした場合、長期的に以下の関係となることが望ましい。
+Sensor Processの取得周期をTs、Communication ProcessがSensorDataを1件処理するために必要な平均処理時間をTcとした場合、長期的に以下の関係となることが望ましい。
 
 ```text
 Tc < Ts
 ```
 
-Communication Processの処理能力がSensor Processのデータ生成速度を上回ることで、通常時にQueueへデータが蓄積し続けることを防止する。
+Tcには、HTTP通信時間だけでなく、RetryおよびBackoffに要する時間を含む。
+
+Communication Processの平均処理能力がSensor Processのデータ生成速度を上回ることで、通常時にQueueへデータが蓄積し続けることを防止する。
 
 ただし、ネットワーク障害やCloudflare側の障害などによって一時的にTcが増加する場合がある。
 
@@ -648,57 +668,74 @@ Communication Processの処理能力がSensor Processのデータ生成速度を
 
 本システムは、リアルタイムOSではなくRaspberry Pi OS上のLinux環境で動作する。
 
-そのため、センサー取得周期および通信処理の実行タイミングには、OSスケジューリングやシステム負荷による多少の遅延が発生する可能性がある。
+そのため、OSスケジューリングやシステム負荷の影響により、処理の実行タイミングに多少の遅延が発生する可能性がある。
 
-本システムでは、ハードリアルタイム性は要求せず、センサーデータを継続的かつ概ね一定周期で取得・送信できることを基本とする。
+Sensor Processは、前回の取得開始時刻を基準として約5秒間隔でセンサーデータを取得する。ただし、Linux環境であるため、実際の取得開始時刻にはスケジューリング遅延が発生し得る。
+
+Communication Processは、IPC QueueからSensorDataを取得したことを契機として送信処理を開始する。通信処理の実行タイミングは、センサー取得周期とは同期しない。
+
+本システムではハードリアルタイム性を要求せず、Linux環境で発生する多少の実行遅延を許容する。
 
 ### 12.12 Process起動時のタイミング
 
 systemdがSensor ProcessおよびCommunication Processを起動する。
 
-各Processは起動時にIPC Message Queueを利用可能な状態へ初期化する。IPCの共有リソース生成・取得については、競合が発生しないよう共通の名前を使用し、既存Queueがある場合は再利用する。
+両Processは共通のIPC Message Queueを使用する。Processの起動順序には依存せず、両Processが同じQueueを利用できる状態に初期化する。Queueの生成・オープンおよび既存Queueの扱いについては、Lifecycle設計で定義する。
 
-Sensor Processは初期化完了後に5秒周期の取得処理を開始する。Communication Processは起動後、QueueからSensorDataを待ち受ける。
+Sensor Processは初期化完了後に最初のセンサー取得を開始し、その取得開始時刻を基準として以降5秒周期で取得処理を実行する。
+
+Communication Processは初期化完了後、IPC Message QueueからSensorDataを待ち受ける。
 
 ### 12.13 Process停止時のタイミング
 
 正常Shutdownでは、Sensor Processへの停止要求を先に行い、新規SensorDataの生成を停止する。
 
-その後、Communication Processを停止する。Queueに残っているSensorDataは永続化せず、Shutdown完了時に破棄する。
+その後、Communication Processへの停止要求を行い、通信処理を終了する。
+
+Shutdown時にQueueに残っているSensorDataは永続化せず、破棄する。また、Communication Processが処理中のSensorDataについても、Shutdown時の処理終了に伴い送信が完了しない場合があることを許容する。
+
+Communication Processの停止処理および終了期限については、Lifecycle設計およびsystemd設計で定義する。
 
 ### 12.14 周期・タイミングに関する基本方針
 
 以下を基本方針とする。
 
-| 項目                       | 方針                       |
-| ------------------------ | ------------------------ |
-| センサー取得                   | Sensor Processで周期実行      |
-| センサー取得周期                 | 5秒  |
-| データ生成                    | センサー取得ごとにSensorDataを生成   |
-| IPC送信                    | SensorData生成後に実行         |
-| 通信処理                     | Communication Processで実行 |
-| 通信タイミング                  | IPC Queueからデータを取得した時点で送信 |
-| Sensor / Communication周期 | 独立させる                    |
-| 通信遅延                     | IPC Queueで一時的に吸収         |
-| Retry                    | Communication Processで実行 |
-| Backoff                  | Communication Processで実行 |
-| リアルタイム性                  | ハードリアルタイム性は要求しない         |
-| 周期精度                     | Linux環境でのスケジューリング遅延を許容する |
+| 項目 | 方針 |
+|---|---|
+| センサー取得 | Sensor Processで周期実行 |
+| センサー取得周期 | 約5秒 |
+| 周期基準 | 前回の取得開始時刻を基準とする |
+| データ生成 | センサー取得ごとにSensorDataを生成 |
+| IPC送信 | SensorData生成後に実行 |
+| 通信処理 | Communication Processで実行 |
+| 通信タイミング | IPC Queueからデータを取得した時点で送信 |
+| Sensor / Communication周期 | 独立させる |
+| 通信遅延 | IPC Queueで一時的に吸収する |
+| Queue容量 | 100件 |
+| Queue Full時 | 新規SensorDataを破棄する |
+| Retry | Communication Processで実行 |
+| Backoff | Communication Processで実行 |
+| リアルタイム性 | ハードリアルタイム性は要求しない |
+| 周期精度 | Linux環境でのスケジューリング遅延を許容する |
 
 ### 12.15 周期・タイミング設計の決定事項
 
 | 項目 | 決定値 |
 |---|---|
 | DHT11取得周期 | 5秒 |
-| Sensor Process周期方式 | Linuxの周期待機を使用し、ハードリアルタイム性は要求しない |
+| Sensor Process周期方式 | 前回の取得開始時刻を基準とする周期方式（方式B） |
+| 周期精度 | Linux環境でのスケジューリング遅延を許容し、ハードリアルタイム性は要求しない |
 | Communication Process待機方式 | IPC Message Queueのブロッキング待機 |
 | データ送信タイミング | Queueから取得後、直ちに送信開始 |
 | HTTP Timeout | 5秒 |
 | Retry回数 | 初回送信を除き最大3回 |
+| 最大送信試行回数 | 初回送信を含め最大4回 |
 | Retry間隔 | 1秒 → 2秒 → 4秒 |
 | Backoff | Exponential Backoff、最大4秒 |
 | Queue容量 | 100件 |
-| Shutdown時の未送信データ | 永続化せず破棄 |
+| Queue Full時 | 新規SensorDataを破棄する |
+| Shutdown時のQueue内データ | 永続化せず破棄 |
+| Shutdown時の処理中データ | Shutdown時に送信が完了しない場合があることを許容する |
 
 ## 13. 通信設計
 
