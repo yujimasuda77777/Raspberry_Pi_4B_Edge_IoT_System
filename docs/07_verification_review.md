@@ -1,3 +1,5 @@
+# 21. テスト・検証方針
+
 ### 21.1 目的
 
 本章では、本システムが要求事項および各設計内容を満たしていることを確認するための、テスト・検証方針を定義する。
@@ -46,22 +48,26 @@
 
 テスト対象を以下のように分類する。
 
-| ID           | テスト対象                 |
-| ------------ | --------------------- |
-| TEST-TGT-001 | DHT11データ取得            |
-| TEST-TGT-002 | Sensor Process        |
-| TEST-TGT-003 | Data Processing       |
-| TEST-TGT-004 | IPC Message Queue     |
+| ID | テスト対象 |
+|---|---|
+| TEST-TGT-001 | DHT11データ取得 |
+| TEST-TGT-002 | Sensor Process |
+| TEST-TGT-003 | Data Processing |
+| TEST-TGT-004 | IPC Message Queue |
 | TEST-TGT-005 | Communication Process |
-| TEST-TGT-006 | HTTPS通信               |
-| TEST-TGT-007 | Cloudflare Worker連携   |
-| TEST-TGT-008 | Cloudflare D1保存       |
-| TEST-TGT-009 | Browser表示             |
-| TEST-TGT-010 | Process異常・再起動         |
-| TEST-TGT-011 | Raspberry Pi再起動       |
-| TEST-TGT-012 | 正常Shutdown            |
-| TEST-TGT-013 | ログ・監視                 |
-| TEST-TGT-014 | セキュリティ                |
+| TEST-TGT-006 | HTTPS通信 |
+| TEST-TGT-007 | Cloudflare Worker連携 |
+| TEST-TGT-008 | Cloudflare D1保存 |
+| TEST-TGT-009 | Browser表示 |
+| TEST-TGT-010 | Process異常・再起動 |
+| TEST-TGT-011 | Raspberry Pi再起動 |
+| TEST-TGT-012 | 正常Shutdown |
+| TEST-TGT-013 | ログ・監視 |
+| TEST-TGT-014 | セキュリティ |
+
+各テスト項目は、上記テスト対象IDのいずれかに対応付けて管理する。
+
+複数のテスト対象に関係する場合は、関係するすべてのIDを記録する。
 
 ---
 
@@ -82,8 +88,6 @@
 * Error Handling
 * Logging
 
----
-
 #### 21.4.2 Processレベル
 
 Sensor ProcessおよびCommunication Processが、それぞれ独立して設計どおり動作することを確認する。
@@ -98,13 +102,11 @@ Sensor ProcessおよびCommunication Processが、それぞれ独立して設計
 * 停止
 * 再起動
 
----
-
 #### 21.4.3 Process間連携レベル
 
 Sensor ProcessとCommunication Processの間でIPC Message Queueを使用してSensorDataが正しく受け渡されることを確認する。
 
-```mermaid id="u0g7ak"
+```mermaid
 flowchart LR
     SP["Sensor Process"]
     IPC["IPC Message Queue"]
@@ -119,13 +121,11 @@ flowchart LR
     Test -.-> CP
 ```
 
----
-
 #### 21.4.4 システムレベル
 
 DHT11からCloudflare D1までの一連のデータフローが正常に動作することを確認する。
 
-```mermaid id="q2n3my"
+```mermaid
 flowchart LR
     Sensor["DHT11"]
     SP["Sensor Process"]
@@ -144,8 +144,6 @@ flowchart LR
     Test -.-> Sensor
     Test -.-> D1
 ```
-
----
 
 #### 21.4.5 外部システム連携レベル
 
@@ -169,7 +167,7 @@ Cloudflare WorkerおよびD1とのインターフェースが設計どおり動�
 
 基本的なデータフローは以下とする。
 
-```mermaid id="e7rvqv"
+```mermaid
 flowchart LR
     Sensor["DHT11"]
     SP["Sensor Process"]
@@ -205,23 +203,31 @@ flowchart LR
 
 ### 21.6 Sensorテスト
 
+対象：TEST-TGT-001、TEST-TGT-002
+
 Sensor Processについて、以下を確認する。
 
-* Processが起動する
-* DHT11を初期化できる
-* 温度を取得できる
-* 湿度を取得できる
-* timestampを付与できる
-* SensorDataを生成できる
-* 周期的に取得できる
-* センサー取得失敗を検出できる
-* 異常データを検出できる
+* Processが起動する。
+* DHT11を初期化できる。
+* 温度を取得できる。
+* 湿度を取得できる。
+* timestampを付与できる。
+* SensorDataを生成できる。
+* 周期的に取得できる。
+* センサー取得失敗を検出できる。
+* 異常データを検出できる。
 
 特に、取得値が存在するだけでなく、データ形式および値の妥当性についても確認する。
+
+温度・湿度の妥当性は、DHT11の仕様およびセンサー設計で定義した範囲に基づいて判定する。
+
+センサー取得に失敗した場合は、設計した異常処理が実行され、異常データが正常データとして扱われないことを確認する。
 
 ---
 
 ### 21.7 Data Processingテスト
+
+対象：TEST-TGT-002、TEST-TGT-003
 
 Sensor Processで取得したデータが、通信可能なSensorDataへ正しく変換されることを確認する。
 
@@ -230,63 +236,122 @@ Sensor Processで取得したデータが、通信可能なSensorDataへ正し�
 * 温度値の変換
 * 湿度値の変換
 * timestampの生成
+* data_idの設定
 * データ形式
 * 値の妥当性確認
 * 異常値の扱い
 
-不正なSensorDataが生成された場合、Communication Processへ送信されないことを確認する。
+SensorDataの各メンバーについて、設計で定義した型・精度・形式と一致することを確認する。
+
+不正なSensorDataが生成された場合、IPC Message Queueへ送信されないことを確認する。
 
 ---
 
 ### 21.8 IPCテスト
 
+対象：TEST-TGT-002、TEST-TGT-004、TEST-TGT-005
+
 IPC Message Queueについて、以下を確認する。
 
-### 正常系
+#### 正常系
 
-* Sensor Processから送信できる
-* Communication Processが受信できる
-* 送信したSensorDataと受信したSensorDataが一致する
-* FIFO順序が維持される
-* Queueが空の場合に正常待機する
+* Sensor Processから送信できる。
+* Communication Processが受信できる。
+* 送信したSensorDataと受信したSensorDataが一致する。
+* FIFO順序が維持される。
+* Queueが空の場合に正常待機する。
+* Queue容量が設計値である100件となっている。
 
-### 異常系
+#### 異常系
 
-* Queue Fullを検出できる
-* Queueアクセス失敗を検出できる
-* Process停止時にIPCを適切に扱える
-* Process再起動後にIPCを再初期化できる
+* Queue Fullを検出できる。
+* Queueアクセス失敗を検出できる。
+* Queueが存在しない場合の接続失敗を検出できる。
+* Process停止時にIPCを適切に扱える。
+* Process再起動後にIPCを再初期化できる。
 
-Queue Full発生時の具体的なデータ破棄・保存方針については、決定した方式に従って検証する。
+#### Queue Full時の確認
+
+Queue Fullを意図的に発生させ、以下を確認する。
+
+1. 新規SensorDataの送信が失敗する。
+2. 新規SensorDataが破棄される。
+3. Queue内に存在する既存データが不必要に削除されない。
+4. Errorログが出力される。
+5. Queue FullによってSensor Processが無限待ち状態にならない。
+6. 次の周期処理へ移行できる。
+
+Queue Full時は新規SensorDataを破棄する方針とし、ローカルストレージへの退避や永続化は行わない。
 
 ---
 
 ### 21.9 Communicationテスト
 
+対象：TEST-TGT-005、TEST-TGT-006、TEST-TGT-007
+
 Communication Processについて、以下を確認する。
 
-* 起動できる
-* IPCからSensorDataを受信できる
-* HTTP Requestを生成できる
-* JSONを生成できる
-* HTTPS通信できる
-* HTTP 2xxを成功として扱える
-* HTTP 4xxを適切に処理できる
-* HTTP 5xxを適切に処理できる
-* Timeoutを検出できる
-* DNSエラーを検出できる
-* Connection Errorを検出できる
-* Retryできる
-* Backoffできる
-* 通信復旧後に送信を再開できる
+* 起動できる。
+* IPCからSensorDataを受信できる。
+* HTTP Requestを生成できる。
+* JSONを生成できる。
+* HTTPS通信できる。
+* HTTP 2xxを成功として扱える。
+* HTTP 4xxを適切に処理できる。
+* HTTP 5xxを適切に処理できる。
+* Timeoutを検出できる。
+* DNSエラーを検出できる。
+* Connection Errorを検出できる。
+* Retryできる。
+* Backoffできる。
+* 通信復旧後に送信を再開できる。
+
+#### Retry / Backoffの検証
+
+設計で決定した以下の条件を確認する。
+
+| 項目 | 検証条件 |
+|---|---|
+| 初回送信 | 1回 |
+| Retry回数 | 初回送信後、最大3回 |
+| Retry間隔 | 1秒 → 2秒 → 4秒 |
+| Backoff方式 | Exponential Backoff |
+| 最大Backoff | 4秒 |
+| HTTP Timeout | 5秒 |
+
+以下を確認する。
+
+1. 初回送信が失敗した場合、1秒後にRetryする。
+2. 2回目の送信が失敗した場合、2秒後にRetryする。
+3. 3回目の送信が失敗した場合、4秒後にRetryする。
+4. 最大Retry回数を超えて再送しない。
+5. HTTP Timeoutが5秒で処理される。
+6. Retry中に通信が成功した場合、成功として処理する。
+7. Retry上限に達した場合、設計したエラー処理を実行する。
+
+#### HTTP Status別の検証
+
+| 結果 | 期待動作 |
+|---|---|
+| 2xx | 成功として扱う |
+| 4xx | 原則Retryしない |
+| 5xx | Retry対象とする |
+| Timeout | Retry対象とする |
+| DNS Failure | Retry対象とする |
+| Connection Failure | Retry対象とする |
+| TLS / 証明書検証エラー | 通信異常として処理する |
+
+認証失敗など、再送しても解決しない恒久的なエラーを無条件にRetryしないことを確認する。
 
 ---
 
 ### 21.10 Cloudflare連携テスト
 
+対象：TEST-TGT-006、TEST-TGT-007、TEST-TGT-008
+
 Cloudflare Workerとのインターフェースについて確認する。
 
-### Request
+#### Request
 
 以下を確認する。
 
@@ -297,7 +362,7 @@ Cloudflare Workerとのインターフェースについて確認する。
 * 必須データ
 * 認証情報
 
-### Response
+#### Response
 
 以下を確認する。
 
@@ -307,13 +372,19 @@ Cloudflare Workerとのインターフェースについて確認する。
 * 異常応答
 * 不正要求への応答
 
-### D1
+#### D1
 
 Workerを経由してD1へSensorDataが保存されることを確認する。
+
+保存されたデータについて、送信データとの値の一致を確認する。
+
+また、重複送信時にD1へ重複登録されないことを確認する。
 
 ---
 
 ### 21.11 Browserテスト
+
+対象：TEST-TGT-007、TEST-TGT-008、TEST-TGT-009
 
 BrowserからCloudflare Workerへアクセスし、SensorDataを正しく表示できることを確認する。
 
@@ -333,11 +404,13 @@ BrowserからCloudflare Workerへアクセスし、SensorDataを正しく表示�
 
 ### 21.12 周期・タイミングテスト
 
+対象：TEST-TGT-002、TEST-TGT-004、TEST-TGT-005
+
 Sensor Processが設計した周期でセンサー取得を実行することを確認する。
 
 また、Communication ProcessがSensor Processの周期に直接依存していないことを確認する。
 
-```mermaid id="pj2f9a"
+```mermaid
 flowchart LR
     SP["Sensor Process"]
     IPC["IPC Queue"]
@@ -355,38 +428,48 @@ flowchart LR
 
 通信遅延が発生した場合でも、Sensor Processが必要以上に停止しないことを確認する。
 
+Communication Processの処理遅延によってQueueにデータが蓄積する場合は、Queue容量およびQueue Full時の処理が設計どおり動作することを確認する。
+
 ---
 
 ### 21.13 異常系テスト
+
+対象：関連するすべてのTEST-TGT
 
 15章および16章で定義した異常・復旧について、実際に異常を発生させて設計どおり動作することを確認する。
 
 主な対象は以下とする。
 
-| 異常                        | 確認内容         |
-| ------------------------- | ------------ |
-| DHT11取得失敗                 | Retry・エラー処理  |
-| 不正SensorData              | データ破棄        |
-| IPC送信失敗                   | エラー検出        |
-| Queue Full                | 設計した処理       |
-| Wi-Fi切断                   | 通信失敗・復旧      |
-| DNS失敗                     | Retry        |
-| Worker接続失敗                | Retry        |
-| Timeout                   | Retry        |
-| HTTP 4xx                  | Retryしない等の処理 |
-| HTTP 5xx                  | Retry        |
-| Sensor Process異常終了        | systemd再起動   |
-| Communication Process異常終了 | systemd再起動   |
-| Raspberry Pi再起動           | Process自動起動  |
-| 電源断                       | 再起動後の復旧      |
+| 異常 | 確認内容 |
+|---|---|
+| DHT11取得失敗 | エラー検出・設計した異常処理 |
+| 不正SensorData | データ破棄 |
+| IPC送信失敗 | エラー検出 |
+| Queue Full | 新規データ破棄・Errorログ |
+| Queue不存在 | 接続失敗検出・再試行 |
+| Wi-Fi切断 | 通信失敗・復旧 |
+| DNS失敗 | Retry |
+| Worker接続失敗 | Retry |
+| Timeout | Retry |
+| HTTP 4xx | 原則Retryしない |
+| HTTP 5xx | Retry |
+| TLS / 証明書検証エラー | 通信異常として処理 |
+| Sensor Process異常終了 | systemd再起動 |
+| Communication Process異常終了 | systemd再起動 |
+| Raspberry Pi再起動 | Process自動起動 |
+| 電源断 | 再起動後の復旧 |
+
+異常発生後は、異常検出だけでなく、復旧後に正常状態へ戻ったことも確認する。
 
 ---
 
 ### 21.14 Process異常終了テスト
 
+対象：TEST-TGT-010、TEST-TGT-013
+
 Sensor ProcessおよびCommunication Processを意図的に異常終了させ、systemdによる復旧を確認する。
 
-```mermaid id="d4p9kz"
+```mermaid
 sequenceDiagram
     participant Test as Test
     participant SD as systemd
@@ -402,15 +485,18 @@ sequenceDiagram
 
 確認項目は以下とする。
 
-* 異常終了を検出できる
-* systemdが再起動する
-* 再起動後に初期化される
-* 正常動作へ復帰する
-* ログから異常と復旧を確認できる
+* 異常終了を検出できる。
+* systemdが再起動する。
+* 再起動後に初期化される。
+* 正常動作へ復帰する。
+* ログから異常と復旧を確認できる。
+* Restart設定および起動制限が設計どおり動作する。
 
 ---
 
 ### 21.15 Raspberry Pi再起動テスト
+
+対象：TEST-TGT-010、TEST-TGT-011
 
 Raspberry Piを正常に再起動し、OS起動後にSensor ProcessおよびCommunication Processが自動起動することを確認する。
 
@@ -425,26 +511,40 @@ Raspberry Piを正常に再起動し、OS起動後にSensor ProcessおよびComm
 7. Workerへの送信が再開される。
 8. D1への保存が再開される。
 
+再起動前の未送信データについては永続化しない方針であるため、再起動後に未送信データが復元送信されないことも確認する。
+
 ---
 
 ### 21.16 正常Shutdownテスト
 
+対象：TEST-TGT-010、TEST-TGT-012、TEST-TGT-013
+
 Raspberry Piを正常にShutdownし、Processが設計した順序で停止することを確認する。
+
+正常Shutdownでは、Sensor Processを先に停止し、その後Communication Processを停止する。
 
 確認項目は以下とする。
 
-* Shutdown要求を受け付ける
-* 新規SensorData取得を停止する
-* 新規通信を停止する
-* 必要なQueue処理を実行する
-* Processが正常終了する
-* リソースを解放する
-* systemdがService停止を完了する
-* OSがShutdownする
+1. Shutdown要求を受け付ける。
+2. Sensor Processが新規SensorDataの取得を停止する。
+3. Sensor ProcessがIPCへの新規送信を停止する。
+4. Sensor Processが正常終了する。
+5. Communication Processが新規通信を停止する。
+6. Queueに残った未送信データは永続化せず破棄する。
+7. Communication Processが正常終了する。
+8. 各Processがリソースを解放する。
+9. systemdがService停止を完了する。
+10. OSがShutdownする。
+
+Queueに残ったデータをShutdown完了後に復元送信しないことを確認する。
+
+Processの停止順序は、実際のsystemd Unitの依存関係および停止動作によって確認する。
 
 ---
 
 ### 21.17 ログ・監視テスト
+
+対象：TEST-TGT-013、TEST-TGT-014
 
 17章で定義したログが、必要なタイミングで出力されることを確認する。
 
@@ -462,6 +562,8 @@ Raspberry Piを正常にShutdownし、Processが設計した順序で停止す�
 * 復旧
 * Process異常終了
 * Process再起動
+* 認証失敗
+* 不正要求
 
 また、ログに以下が含まれていないことを確認する。
 
@@ -470,44 +572,65 @@ Raspberry Piを正常にShutdownし、Processが設計した順序で停止す�
 * パスワード
 * 秘密鍵
 * Authorization情報
+* Shared Secret
+* Wi-Fi認証情報
 
 ---
 
 ### 21.18 セキュリティテスト
 
+対象：TEST-TGT-006、TEST-TGT-007、TEST-TGT-008、TEST-TGT-009、TEST-TGT-014
+
 20章のセキュリティ設計について確認する。
 
 主な確認項目は以下とする。
 
-* HTTPではなくHTTPSを使用している
-* TLS証明書を検証している
-* 認証なしのSensorData送信が拒否される
-* 不正な認証情報が拒否される
-* 不正なSensorDataが拒否される
-* D1へ直接アクセスできない
-* 秘密情報がソースコードに存在しない
-* Git管理対象に秘密情報が存在しない
-* ログに秘密情報が存在しない
-* Workerのエラーレスポンスに内部情報が含まれない
+* HTTPではなくHTTPSを使用している。
+* TLS証明書を検証している。
+* 認証なしのSensorData送信が拒否される。
+* 不正な認証情報が拒否される。
+* 不正なSensorDataが拒否される。
+* D1へ直接アクセスできない。
+* 秘密情報がソースコードに存在しない。
+* Git管理対象に秘密情報が存在しない。
+* ログに秘密情報が存在しない。
+* Workerのエラーレスポンスに内部情報が含まれない。
+
+#### 重複送信・冪等性の検証
+
+SensorDataの重複排除方式として、`data_id + timestamp`の複合キー方式を採用する。
+
+以下を確認する。
+
+1. 同じ`data_id`と`timestamp`を持つSensorDataを複数回送信する。
+2. D1に同一データが重複登録されないことを確認する。
+3. `data_id`が同じでも`timestamp`が異なるデータは、複合キーが異なるデータとして扱われることを確認する。
+4. 通信Timeout後のRetryによって、同一データが重複登録されないことを確認する。
+
+この重複排除方式は通信Retryに対する冪等性を確保するためのものであり、認証やリプレイ攻撃対策の代替とはしない。
 
 ---
 
 ### 21.19 長時間動作テスト
 
-本システムを一定期間連続動作させ、長時間運転時の安定性を確認する。
+対象：TEST-TGT-002、TEST-TGT-004、TEST-TGT-005、TEST-TGT-008、TEST-TGT-013
+
+本システムを24時間連続動作させ、長時間運転時の安定性を確認する。
 
 確認項目は以下とする。
 
-* Processが停止しない
-* SensorData取得が継続する
-* IPC Queueが異常蓄積しない
-* 通信が継続する
-* Memory使用量が異常増加しない
-* CPU使用率が異常増加しない
-* ログが異常増加しない
-* D1への保存が継続する
+* Processが停止しない。
+* SensorData取得が継続する。
+* IPC Queueが恒常的に滞留しない。
+* 通信が継続する。
+* Memory使用量に異常な増加がない。
+* CPU平均使用率が30%以下である。
+* Disk / Logに継続的な異常増加がない。
+* D1への保存が継続する。
 
 特にMemory LeakやQueue滞留など、短時間のテストでは検出しにくい問題を確認する。
+
+判定基準は23.3のPND-018およびPND-019に従う。
 
 ---
 
@@ -515,7 +638,7 @@ Raspberry Piを正常にShutdownし、Processが設計した順序で停止す�
 
 テスト結果は、システム要求と対応付けられる構成とする。
 
-```mermaid id="1ynq5s"
+```mermaid
 flowchart LR
     Requirement["システム要求"]
     Design["設計"]
@@ -542,6 +665,8 @@ Sensorテスト
 
 のように、要求からテスト結果まで追跡できるようにする。
 
+各テスト項目には、対応する要求ID、設計箇所、テスト対象IDおよびテスト結果を記録する。
+
 ---
 
 ### 21.21 テスト結果の判定
@@ -553,7 +678,27 @@ Sensorテスト
 * BLOCKED
 * NOT TESTED
 
+#### PASS
+
+設計で定義した期待結果を満たした場合。
+
+#### FAIL
+
+テストを実施した結果、設計で定義した期待結果を満たさなかった場合。
+
 FAILの場合は、原因を調査し、必要に応じて設計または実装を見直す。
+
+#### BLOCKED
+
+テスト環境、外部サービス、前提条件などの問題により、テストを実施できない場合。
+
+BLOCKEDの場合は、実施できなかった理由、影響範囲および解除条件を記録する。
+
+#### NOT TESTED
+
+テストをまだ実施していない場合。
+
+NOT TESTEDはPASSとして扱わない。
 
 設計変更が必要となった場合には、既存の設計判断との整合性を確認する。
 
@@ -563,18 +708,32 @@ FAILの場合は、原因を調査し、必要に応じて設計または実装�
 
 基本的なシステムテスト環境は以下とする。
 
-| 項目               | 環境                      |
-| ---------------- | ----------------------- |
-| Edge Device      | Raspberry Pi 4B         |
-| OS               | Raspberry Pi OS         |
-| Sensor           | DHT11                   |
-| Network          | Wi-Fi / Internet        |
-| Edge Application | C++                     |
-| Cloud            | Cloudflare Worker       |
-| Database         | Cloudflare D1           |
-| Viewer           | PC / Smartphone Browser |
+| 項目 | 環境 |
+|---|---|
+| Edge Device | Raspberry Pi 4B |
+| OS | Raspberry Pi OS |
+| Sensor | DHT11 |
+| Network | Wi-Fi / Internet |
+| Edge Application | C++ |
+| Cloud | Cloudflare Worker |
+| Database | Cloudflare D1 |
+| Viewer | PC / Smartphone Browser |
 
-実際のテスト時には、使用するOSバージョン、C++環境、Worker構成等を記録する。
+実際のテスト時には、再現性および結果の追跡性を確保するため、以下を記録する。
+
+* Raspberry Piのモデル
+* Raspberry Pi OSのバージョン
+* Kernelバージョン
+* g++バージョン
+* CMakeバージョン
+* libcurlバージョン
+* lgpioバージョン
+* Workerのデプロイバージョンまたは確認日時
+* D1のスキーマ
+* Network接続環境
+* テスト実施日時
+* テスト実施者
+* テスト対象のソフトウェアバージョン
 
 ---
 
@@ -582,14 +741,18 @@ FAILの場合は、原因を調査し、必要に応じて設計または実装�
 
 本システムでは、機能だけでなく以下の品質特性も確認する。
 
-| 品質特性   | 主な確認内容              |
-| ------ | ------------------- |
-| 信頼性    | 異常時に適切に処理できる        |
-| 可用性    | Process異常後に復旧できる    |
-| 保守性    | ログから原因を追跡できる        |
-| 拡張性    | Process・IPC構成を拡張できる |
-| 回復性    | 再起動後に正常動作へ復帰できる     |
-| セキュリティ | 不正アクセス・情報漏えいを防止できる  |
+| 品質特性 | 主な確認内容 |
+|---|---|
+| 信頼性 | 異常時に適切に処理できる |
+| 可用性 | Process異常後に復旧できる |
+| 保守性 | ログから原因を追跡できる |
+| 拡張性 | Process・IPC構成の拡張を妨げない設計である |
+| 回復性 | 再起動後に正常動作へ復帰できる |
+| セキュリティ | 不正アクセス・情報漏えいを防止できる |
+
+拡張性については、現在の機能に対するテストだけで将来の拡張性を保証するものではない。
+
+現時点では、Process間の責務およびインターフェースが明確であり、将来の機能追加によって既存構成を不必要に複雑化しない設計となっていることを確認する。
 
 ---
 
@@ -597,7 +760,7 @@ FAILの場合は、原因を調査し、必要に応じて設計または実装�
 
 最終的なテストは以下の流れで実施する。
 
-```mermaid id="5h8j3n"
+```mermaid
 flowchart TB
     Design["設計"]
     Plan["テスト計画"]
@@ -605,6 +768,7 @@ flowchart TB
     Result["結果確認"]
     Fail["問題あり"]
     Pass["問題なし"]
+    Blocked["実施不可"]
     Fix["原因調査・修正"]
     Retest["再テスト"]
     Complete["検証完了"]
@@ -615,35 +779,41 @@ flowchart TB
 
     Result -->|PASS| Pass
     Result -->|FAIL| Fail
+    Result -->|BLOCKED| Blocked
 
     Fail --> Fix
     Fix --> Retest
     Retest --> Result
 
     Pass --> Complete
+    Blocked --> Plan
 ```
+
+BLOCKEDとなったテストは、解除条件を満たした後に再実施する。
+
+NOT TESTEDの項目が残っている場合は、検証完了とは判断しない。
 
 ---
 
 ### 21.25 設計上の判断
 
-### Decision
+#### Decision
 
 テストは、正常系だけでなく、Process異常、IPC異常、通信異常、再起動、Shutdown、セキュリティを含めて実施する。
 
-### Reason
+#### Reason
 
 本システムは複数のProcessと外部システムで構成されており、正常時に動作するだけではシステムとしての信頼性を確認できない。
 
 特に、Sensor ProcessとCommunication Processを分離した設計では、Process間の障害分離と復旧が設計上の重要なポイントとなる。
 
-### Alternatives
+#### Alternatives
 
-* 正常系だけを確認する
-* システム全体が動作することだけを確認する
-* 異常系は実際には発生しないものとして扱う
+* 正常系だけを確認する。
+* システム全体が動作することだけを確認する。
+* 異常系は実際には発生しないものとして扱う。
 
-### Why not
+#### Why not
 
 実運用ではWi-Fi切断、Worker障害、Process異常終了などが発生する可能性があるため、異常時の動作も設計どおりであることを確認する必要がある。
 
@@ -663,11 +833,19 @@ flowchart TB
 8. 正常Shutdownを検証する。
 9. ログ・監視機能を検証する。
 10. セキュリティ設計を検証する。
-11. 長時間動作による安定性を検証する。
+11. 24時間連続動作による安定性を検証する。
 12. システム要求とテスト結果を対応付ける。
 13. FAILとなった項目は原因調査と再テストを実施する。
+14. BLOCKEDとなった項目は理由と解除条件を記録する。
+15. NOT TESTEDの項目をPASSとして扱わない。
+16. `data_id + timestamp`による重複排除を検証する。
+17. Queue Full時の新規データ破棄を検証する。
+18. Shutdown時の未送信データ破棄を検証する。
+19. Retry回数、間隔およびHTTP Timeoutを決定値に基づいて検証する。
 
 ---
+
+# 22. 設計判断の記録
 
 ### 22.1 目的
 
@@ -679,27 +857,27 @@ flowchart TB
 
 ### 22.2 Raspberry PiをEdge Deviceとする
 
-### Decision
+#### Decision
 
 Raspberry Pi 4BをEdge Deviceとして採用する。
 
-### Reason
+#### Reason
 
 Raspberry PiはLinux OSを搭載でき、センサー制御、Process管理、IPC、ネットワーク通信、HTTPS、systemdなどを一つの実機上で構築できる。
 
 また、外部ネットワークを介してCloudflare Workerと接続できるため、Edge DeviceからCloudまでのデータフローを実際に確認できる。
 
-### Alternatives
+#### Alternatives
 
-* Arduino等のマイコンを使用する
-* PCをEdge Deviceとして使用する
-* 専用IoT Gatewayを使用する
+* Arduino等のマイコンを使用する。
+* PCをEdge Deviceとして使用する。
+* 専用IoT Gatewayを使用する。
 
-### Why not
+#### Why not
 
-本システムでは、センサー制御だけでなくLinux上のProcess、IPC、systemd、ネットワーク通信まで含めたシステム構成を対象とするため、Linuxを動作させられるRaspberry Piを採用する。
+本システムでは、センサー制御だけでなくLinux上のProcess、IPC、systemd、ネットワーク通信まで含むシステム構成を対象とするため、Linuxを動作させられるRaspberry Piを採用する。
 
-### Trade-off
+#### Trade-off
 
 Raspberry Piはマイコンよりもシステム構成が複雑になる一方、OS、Process、ネットワークなどを含むシステム設計が可能となる。
 
@@ -707,23 +885,23 @@ Raspberry Piはマイコンよりもシステム構成が複雑になる一方�
 
 ### 22.3 C++をEdge Applicationに採用する
 
-### Decision
+#### Decision
 
 Raspberry Pi上のEdge ApplicationはC++で実装する。
 
-### Reason
+#### Reason
 
 C++はセンサー処理、Process、IPC、スレッド、リソース管理、ネットワーク通信などを明示的に扱える。
 
 また、組み込みソフトウェアとの親和性が高く、既存のC/C++による設計知識をLinuxアプリケーションへ展開しやすい。
 
-### Alternatives
+#### Alternatives
 
 * Python
 * C
 * Rust
 
-### Why not
+#### Why not
 
 Pythonは実装量を少なくできる一方、今回のシステムではProcess、IPC、リソース管理などを含めた低レイヤ寄りの構成を明示的に設計することを重視する。
 
@@ -731,7 +909,7 @@ Cは十分な実装能力を持つが、C++ではクラス、RAII、標準ライ
 
 Rustについては有力な選択肢ではあるが、本システムではC++を採用する。
 
-### Trade-off
+#### Trade-off
 
 C++はPythonより実装やリソース管理が複雑になる可能性がある。
 
@@ -741,15 +919,15 @@ C++はPythonより実装やリソース管理が複雑になる可能性があ�
 
 ### 22.4 Sensor ProcessとCommunication Processを分離する
 
-### Decision
+#### Decision
 
 Sensor処理とCloudflare通信処理を別Processとして構成する。
 
-### Reason
+#### Reason
 
 センサー取得とネットワーク通信では、処理特性と障害要因が異なる。
 
-```text id="8jzq4v"
+```text
 Sensor Process
     ↓
 センサー取得
@@ -763,19 +941,19 @@ Internet通信
 
 通信障害が発生してもSensor Process自体を直接停止させない構成とすることで、障害の影響範囲を抑制できる。
 
-### Alternatives
+#### Alternatives
 
 * 1Process + 複数Thread
-* 1Processですべて処理する
-* Sensor Processから通信処理を直接呼び出す
+* 1Processですべて処理する。
+* Sensor Processから通信処理を直接呼び出す。
 
-### Why not
+#### Why not
 
 1Process構成では、通信処理の異常がSensor処理へ影響する可能性がある。
 
 Thread構成でも分離は可能だが、Process分離と比較してメモリ空間を共有するため、障害分離の観点ではProcess分離を採用する。
 
-### Trade-off
+#### Trade-off
 
 Process間通信が必要になるため、IPCという追加の仕組みが必要になる。
 
@@ -783,15 +961,15 @@ Process間通信が必要になるため、IPCという追加の仕組みが必�
 
 ### 22.5 IPC Message Queueを採用する
 
-### Decision
+#### Decision
 
 Sensor ProcessとCommunication Process間のIPCにはMessage Queueを採用する。
 
-### Reason
+#### Reason
 
 SensorDataは「一つのデータを一つのメッセージ」として扱うことができる。
 
-```text id="t5w1ah"
+```text
 Sensor Process
      ↓
  SensorData
@@ -803,14 +981,14 @@ Communication Process
 
 また、Sensor ProcessとCommunication Processの処理速度が一時的に異なる場合でも、Queueによって一時的にデータを保持できる。
 
-### Alternatives
+#### Alternatives
 
 * Pipe
 * FIFO
 * Unix Domain Socket
 * Shared Memory
 
-### Why not
+#### Why not
 
 PipeやFIFOでもデータ交換は可能だが、今回のSensorDataのような離散的なメッセージを扱う構成ではMessage Queueが理解しやすい。
 
@@ -818,7 +996,7 @@ Shared Memoryは高速なデータ交換に向く一方、同期制御などの�
 
 Unix Domain Socketは将来的な拡張性があるが、今回の基本的なProcess間メッセージ交換にはMessage Queueで十分と判断する。
 
-### Trade-off
+#### Trade-off
 
 Queue容量が有限であるため、Communication Processが長時間停止した場合にはQueue Fullが発生する可能性がある。
 
@@ -826,17 +1004,17 @@ Queue容量が有限であるため、Communication Processが長時間停止し
 
 ### 22.6 Sensor ProcessとCommunication Processの時間的分離
 
-### Decision
+#### Decision
 
 Sensor取得周期とCommunication処理周期を独立させる。
 
-### Reason
+#### Reason
 
 Sensor取得は一定周期で実施する必要がある一方、Network通信はInternet状態によって処理時間が変動する。
 
 そのため、Sensor Processが通信処理の完了を待つ構成は避ける。
 
-```mermaid id="gk5x0f"
+```mermaid
 flowchart LR
     SP["Sensor Process"]
     IPC["IPC Message Queue"]
@@ -847,7 +1025,7 @@ flowchart LR
     CP -->|通信時間は変動| Worker["Cloudflare Worker"]
 ```
 
-### Trade-off
+#### Trade-off
 
 通信処理がSensorData生成速度を上回る場合、Queueにデータが蓄積する。
 
@@ -857,17 +1035,17 @@ flowchart LR
 
 ### 22.7 Cloudflare Workerを外部システムとして利用する
 
-### Decision
+#### Decision
 
 Cloudflare WorkerをRaspberry PiからのSensorData送信先として利用する。
 
-### Reason
+#### Reason
 
 HTTPSによる通信、HTTP API、データ処理、D1との連携を比較的少ない構成で実現できる。
 
 また、Raspberry Pi側からInternet経由でアクセスできるため、EdgeからCloudまでのデータフローを構築できる。
 
-### Alternatives
+#### Alternatives
 
 * AWS
 * Azure
@@ -875,13 +1053,13 @@ HTTPSによる通信、HTTP API、データ処理、D1との連携を比較的�
 * MQTT Broker
 * 独自サーバー
 
-### Why not
+#### Why not
 
 本システムでは、クラウド側を大規模に構築すること自体を目的とせず、Edge Deviceから外部システムへデータを送信する構成を重視する。
 
 そのため、Worker + D1という比較的シンプルな構成を採用する。
 
-### Trade-off
+#### Trade-off
 
 Cloudflare固有の仕組みに依存するため、将来的に別クラウドへ移行する場合にはインターフェース変更が必要になる。
 
@@ -889,29 +1067,29 @@ Cloudflare固有の仕組みに依存するため、将来的に別クラウド�
 
 ### 22.8 HTTP / HTTPSを採用する
 
-### Decision
+#### Decision
 
 Communication ProcessからCloudflare Workerへの通信にはHTTPSを使用する。
 
-### Reason
+#### Reason
 
 HTTP APIは構成が理解しやすく、SensorDataをJSONとして送信できる。
 
 HTTPSを使用することでInternet上の通信を暗号化できる。
 
-### Alternatives
+#### Alternatives
 
 * MQTT
 * WebSocket
 * TCP独自プロトコル
 
-### Why not
+#### Why not
 
 MQTTはIoT用途に適しているが、Brokerを含む構成が追加される。
 
 今回のシステムでは、SensorDataをWorkerへ送信する単純な通信経路を構築することを優先し、HTTP / HTTPSを採用する。
 
-### Trade-off
+#### Trade-off
 
 HTTPはMQTTのようなIoT専用プロトコルではないため、大規模なセンサー群を想定した場合には別方式が適する可能性がある。
 
@@ -919,28 +1097,28 @@ HTTPはMQTTのようなIoT専用プロトコルではないため、大規模な
 
 ### 22.9 Cloudflare D1をデータ保存先とする
 
-### Decision
+#### Decision
 
 SensorDataの保存先としてCloudflare D1を利用する。
 
-### Reason
+#### Reason
 
 Workerとの連携が容易であり、SensorDataの履歴を保存できる。
 
 また、SQLによって履歴データを取得できるため、Browserでの履歴表示やグラフ表示につなげやすい。
 
-### Alternatives
+#### Alternatives
 
 * SQLiteをRaspberry Piに保存
 * MySQL
 * PostgreSQL
 * Cloudflare以外のデータベース
 
-### Why not
+#### Why not
 
 本システムではEdge DeviceからCloudまでのデータフローを構築するため、Raspberry Pi内だけにデータを保存する構成は採用しない。
 
-### Trade-off
+#### Trade-off
 
 Cloudflareへの依存が発生する。
 
@@ -950,17 +1128,17 @@ Cloudflareへの依存が発生する。
 
 ### 22.10 Cloudflareをシステムの中心にしない
 
-### Decision
+#### Decision
 
 システム設計の中心はRaspberry Pi側のEdge Applicationとする。
 
 Cloudflare WorkerおよびD1は外部システムとして扱う。
 
-### Reason
+#### Reason
 
 本システムでは、Edge Deviceから外部システムへデータを送信する一連の構成を明確にすることを重視する。
 
-```mermaid id="l7t5u0"
+```mermaid
 flowchart LR
     Sensor["DHT11"]
     Edge["Raspberry Pi<br/>Edge Application"]
@@ -970,7 +1148,7 @@ flowchart LR
     Edge --> External
 ```
 
-### Trade-off
+#### Trade-off
 
 Cloud側で実施できる処理をEdge側へ配置する必要が生じる場合がある。
 
@@ -980,27 +1158,27 @@ Cloud側で実施できる処理をEdge側へ配置する必要が生じる場�
 
 ### 22.11 systemdをProcess管理に利用する
 
-### Decision
+#### Decision
 
 Sensor ProcessおよびCommunication Processのライフサイクル管理にはsystemdを利用する。
 
-### Reason
+#### Reason
 
 Raspberry Pi OSに標準的に存在する仕組みを利用でき、Processの自動起動、異常終了時の再起動、ログ管理などを実現できる。
 
-### Alternatives
+#### Alternatives
 
 * 独自監視Process
 * Shell Scriptによる監視
 * Supervisor等の外部ツール
 
-### Why not
+#### Why not
 
 Process監視のために独自の仕組みを追加すると、システム構成が複雑になる。
 
 systemdで必要なProcess管理機能を実現できるため、systemdを採用する。
 
-### Trade-off
+#### Trade-off
 
 systemdのUnit、依存関係、停止処理など、Linux固有の知識が必要になる。
 
@@ -1008,25 +1186,25 @@ systemdのUnit、依存関係、停止処理など、Linux固有の知識が必�
 
 ### 22.12 DHT11を採用する
 
-### Decision
+#### Decision
 
 温湿度センサーとしてDHT11を使用する。
 
-### Reason
+#### Reason
 
 温度・湿度という2種類のデータを一つのセンサーから取得でき、システム全体のデータフローを構築するセンサーとして扱いやすい。
 
-### Alternatives
+#### Alternatives
 
 * DHT22
 * BME280
 * その他のI2Cセンサー
 
-### Why not
+#### Why not
 
 今回のシステムでは高精度な温湿度計測を主目的としていないため、DHT11で必要なデータを取得できると判断する。
 
-### Trade-off
+#### Trade-off
 
 DHT11は高精度・高速なセンサーではないため、将来的により高精度な計測が必要になった場合にはセンサー変更を検討する。
 
@@ -1034,15 +1212,15 @@ DHT11は高精度・高速なセンサーではないため、将来的により
 
 ### 22.13 センサー取得と通信を同期させない
 
-### Decision
+#### Decision
 
 Sensor ProcessはCommunication Processの通信完了を待たない。
 
-### Reason
+#### Reason
 
 Network通信は外部要因によって処理時間が変動するため、通信待ちによってSensor取得周期が乱れることを避ける。
 
-```text id="m3p4xw"
+```text
 Sensor Process
     ↓
 SensorData生成
@@ -1058,7 +1236,7 @@ Queueから受信
 HTTP通信
 ```
 
-### Trade-off
+#### Trade-off
 
 Communication Processが遅い場合、Queueにデータが蓄積する。
 
@@ -1068,15 +1246,15 @@ Communication Processが遅い場合、Queueにデータが蓄積する。
 
 ### 22.14 Process障害を局所化する
 
-### Decision
+#### Decision
 
 Sensor ProcessとCommunication Processを独立して復旧可能な構成とする。
 
-### Reason
+#### Reason
 
 例えばCloudflare Workerへの通信が失敗しても、センサー取得まで停止させる必要はない。
 
-```mermaid id="w8e3ny"
+```mermaid
 flowchart LR
     SP["Sensor Process"]
     IPC["IPC Queue"]
@@ -1091,7 +1269,7 @@ flowchart LR
     SP -.->|継続| Continue["Sensor取得継続"]
 ```
 
-### Trade-off
+#### Trade-off
 
 障害分離を実現する代わりに、Process間の状態やデータ保持を考慮する必要がある。
 
@@ -1099,15 +1277,15 @@ flowchart LR
 
 ### 22.15 Queueによる一時的なデータ保持
 
-### Decision
+#### Decision
 
 通信処理の一時的な遅延をIPC Message Queueで吸収する。
 
-### Reason
+#### Reason
 
 通信が一時的に遅くなった場合でも、Sensor Processを直接停止させないため。
 
-### Trade-off
+#### Trade-off
 
 Queueは有限容量であるため、通信障害が長時間継続するとQueue Fullが発生する。
 
@@ -1117,11 +1295,11 @@ Queueは有限容量であるため、通信障害が長時間継続するとQue
 
 ### 22.16 Edge側とCloud側の責務分離
 
-### Decision
+#### Decision
 
 基本的なデータ取得・処理・送信制御はRaspberry Pi側で行い、Cloudflare側では受信・保存・表示用データ提供を行う。
 
-```mermaid id="lr5n0x"
+```mermaid
 flowchart LR
     subgraph Edge["Raspberry Pi"]
         Sensor["取得"]
@@ -1142,7 +1320,7 @@ flowchart LR
     Worker --> API
 ```
 
-### Reason
+#### Reason
 
 Edge DeviceとCloudの責務を明確にすることで、システム全体の構造を理解しやすくする。
 
@@ -1152,19 +1330,19 @@ Edge DeviceとCloudの責務を明確にすることで、システム全体の�
 
 本システムにおける主要な設計判断を以下にまとめる。
 
-| 項目               | 採用方式              | 主な理由                          |
-| ---------------- | ----------------- | ----------------------------- |
-| Edge Device      | Raspberry Pi 4B   | Linux / Network / Processを扱える |
-| Edge Application | C++               | Process / IPC / リソース管理        |
-| センサー             | DHT11             | 温湿度取得                         |
-| Process構成        | 2 Process         | 障害分離                          |
-| IPC              | Message Queue     | SensorDataをメッセージとして扱える        |
-| 通信               | HTTPS             | 暗号化されたHTTP通信                  |
-| データ形式            | JSON              | Workerとの連携が容易                 |
-| Cloud            | Cloudflare Worker | シンプルな外部API                    |
-| Database         | Cloudflare D1     | Workerと連携しやすい                 |
-| Process管理        | systemd           | 自動起動・再起動・監視                   |
-| Browser連携        | Worker経由          | D1を直接公開しない                    |
+| 項目 | 採用方式 | 主な理由 |
+|---|---|---|
+| Edge Device | Raspberry Pi 4B | Linux / Network / Processを扱える |
+| Edge Application | C++ | Process / IPC / リソース管理 |
+| センサー | DHT11 | 温湿度取得 |
+| Process構成 | 2 Process | 障害分離 |
+| IPC | Message Queue | SensorDataをメッセージとして扱える |
+| 通信 | HTTPS | 暗号化されたHTTP通信 |
+| データ形式 | JSON | Workerとの連携が容易 |
+| Cloud | Cloudflare Worker | シンプルな外部API |
+| Database | Cloudflare D1 | Workerと連携しやすい |
+| Process管理 | systemd | 自動起動・再起動・監視 |
+| Browser連携 | Worker経由 | D1を直接公開しない |
 
 ---
 
@@ -1172,12 +1350,12 @@ Edge DeviceとCloudの責務を明確にすることで、システム全体の�
 
 本システムでは、以下の優先順位で設計判断を行う。
 
-1. システム全体の責務を明確にする
-2. 障害の影響範囲を限定する
-3. 構成を過度に複雑化しない
-4. 実装・保守可能な構成とする
-5. セキュリティを確保する
-6. 将来的な拡張を妨げない
+1. システム全体の責務を明確にする。
+2. 障害の影響範囲を限定する。
+3. 構成を過度に複雑化しない。
+4. 実装・保守可能な構成とする。
+5. セキュリティを確保する。
+6. 将来的な拡張を妨げない。
 
 高性能化や大規模化を目的とした過剰な構成は採用せず、現在のシステム規模に対して必要十分な構成を優先する。
 
@@ -1207,23 +1385,29 @@ Edge DeviceとCloudの責務を明確にすることで、システム全体の�
 
 ---
 
-## 23. 設計決定事項
+# 23. 設計決定事項
 
 ### 23.1 目的
 
 本章では、本設計で確定した設計判断を一覧化する。
 
+---
+
 ### 23.2 設計決定事項の管理方針
 
-設計レビュー完了時点で、実装開始に必要な設計判断はすべて確定している。
+設計レビュー完了時点で、実装開始に必要な設計判断はすべて確定していることを基本とする。
+
+設計変更が必要となった場合は、変更理由と影響範囲を確認し、関連する設計章へ反映する。
+
+---
 
 ### 23.3 設計決定事項一覧
 
-本設計において、実装開始を妨げる未解決の設計事項はない。
+本設計において、実装開始に必要な設計事項は以下のとおり決定済みとする。
 
 | ID | 項目 | 決定内容 |
 |---|---|---|
-| PND-001 | SensorDataの具体的な型 | temperature/humidity=`double`、timestamp=`int64_t`、data_id=`uint64_t` |
+| PND-001 | SensorDataの具体的な型 | temperature / humidity = `double`、timestamp = `int64_t`、data_id = `uint64_t` |
 | PND-002 | 温度・湿度の精度 | 小数第1位 |
 | PND-003 | timestamp形式 | UTC基準Unix time seconds |
 | PND-004 | IPC Message Queue容量 | 100件 |
@@ -1241,16 +1425,40 @@ Edge DeviceとCloudの責務を明確にすることで、システム全体の�
 | PND-016 | Queue停止時の残存データ処理 | 永続化せず破棄 |
 | PND-017 | ログ保持期間 | 7日 |
 | PND-018 | 長時間動作テスト時間 | 24時間連続 |
-| PND-019 | リソース使用量の判定基準 | CPU平均30%以下、異常なMemory増加なし、Disk/Logの継続的増加なし、Queue恒常滞留なし |
-| PND-020 | SensorData重複排除方式 | `data_id`を使用しWorker側で重複保存を防止 |
+| PND-019 | リソース使用量の判定基準 | CPU平均30%以下、異常なMemory増加なし、Disk / Logの継続的増加なし、Queue恒常滞留なし |
+| PND-020 | SensorData重複排除方式 | `data_id + timestamp`の複合キーを使用し、Worker / D1側で重複保存を防止 |
+
+---
 
 ### 23.4 設計判断の反映先
 
-PND-001～PND-020の決定内容は、10章～20章の関連設計へ反映済みである。
+PND-001～PND-020の決定内容は、関連する設計章へ反映する。
+
+特に以下の項目については、関連する設計との整合性を確認する。
+
+* PND-001～PND-003：SensorData・データモデル設計
+* PND-004～PND-006：IPC・Queue・データ保持設計
+* PND-007～PND-010：Communication・Retry設計
+* PND-011～PND-013：Worker認証・Browserアクセス・セキュリティ設計
+* PND-014～PND-015：systemd・Process実行環境設計
+* PND-016：Lifecycle・Shutdown設計
+* PND-017：ログ・監視設計
+* PND-018～PND-019：テスト・検証設計
+* PND-020：データモデル・Worker・D1・重複排除設計
+
+設計変更時には、PNDの決定内容と関連設計の両方を更新する。
+
+---
 
 ### 23.5 本章の状態
 
-本章に追加の設計判断を残していない。PND-001～PND-020はすべて本決定済みであり、関連設計章への反映も完了している。
+本章では、PND-001～PND-020を設計決定事項として管理する。
+
+設計レビュー時には、各決定事項が関連設計へ正しく反映されていることを確認する。
+
+---
+
+# 24. 将来拡張
 
 ### 24.1 目的
 
@@ -1298,12 +1506,10 @@ flowchart LR
     IPC --> CommP
     CommP --> Worker
     Worker --> D1
-    Browser --> Worker
+    Worker --> Browser
 
-    SensorP -.->|将来: センサー追加| Sensor2["追加センサー"]
-    CommP -.->|将来: 通信先追加| Service["追加クラウドサービス"]
-    IPC -.->|将来: データ量増加| IPC2["拡張IPC"]
-    CommP -.->|将来: 未送信データ保存| Local
+    CommP -.->|将来: 保存| Local
+    Local -.->|将来: 再送| CommP
 ```
 
 ---
@@ -1375,6 +1581,8 @@ Sensor Interface
 
 現在は、Sensor Processで取得したデータをIPC Message Queue経由でCommunication Processへ渡し、Cloudflare Workerへ送信する。
 
+現在の設計では、未送信データを永続化しない。
+
 将来的にNetwork障害やCloud側障害が長時間継続する場合、Raspberry Pi側にデータを一時保存する機能を追加することが考えられる。
 
 候補：
@@ -1405,7 +1613,7 @@ flowchart LR
 
 ### 24.8 通信方式の拡張
 
-現在の通信方式はHTTP/HTTPSとする。
+現在の通信方式はHTTP / HTTPSとする。
 
 将来的にデータ量やシステム要件が変化した場合、以下の通信方式を検討することができる。
 
@@ -1413,7 +1621,7 @@ flowchart LR
 * WebSocket
 * その他のIoT向け通信方式
 
-ただし、現在のシステムではHTTP/HTTPSで必要な機能を実現できるため、現時点では通信方式を変更しない。
+ただし、現在のシステムではHTTP / HTTPSで必要な機能を実現できるため、現時点では通信方式を変更しない。
 
 ---
 
@@ -1585,7 +1793,8 @@ flowchart LR
 SensorData
 ├── temperature
 ├── humidity
-└── timestamp
+├── timestamp
+└── data_id
 ```
 
 を基本とする。
@@ -1606,18 +1815,20 @@ SensorData
 
 ---
 
-### 24.16 データ重複排除の拡張
+### 24.16 重複排除方式の拡張
 
-通信Timeoutなどによって同一データが再送される可能性がある。
+現在のシステムでは、`data_id + timestamp`の複合キー方式によってSensorDataの重複保存を防止する。
 
-将来的にデータの一意性が重要になった場合、
+この方式は、通信Timeout後のRetryなどによって同一データが再送された場合に、D1へ重複登録されることを防ぐためのものである。
 
-* SensorData ID
+将来的に、複数Edge Device対応、データモデルの大幅な変更、複数のデータ送信元への対応などが必要になった場合には、以下の方式を含めて一意性の管理方法を再検討する。
+
 * UUID
+* Edge Device IDを含む識別子
 * Worker側での重複チェック
 * D1側の一意制約
 
-などを利用した重複排除を導入する。
+変更する場合は、既存データとの互換性および通信Retry時の冪等性を考慮する。
 
 ---
 
@@ -1655,7 +1866,7 @@ SensorData
 * Memory使用量
 * Disk使用量
 
-```mermaid id="1z7k4p"
+```mermaid
 flowchart LR
     Edge["Raspberry Pi"]
 
@@ -1698,23 +1909,23 @@ flowchart TB
 
 将来機能を追加する場合、以下を原則とする。
 
-### 原則1：既存責務を尊重する
+#### 原則1：既存責務を尊重する
 
 新機能を追加する場合でも、既存Processの責務を不必要に混在させない。
 
-### 原則2：インターフェースを明確にする
+#### 原則2：インターフェースを明確にする
 
 Process間、Workerとの間、Browserとの間でデータ形式と責務を明確にする。
 
-### 原則3：障害影響範囲を限定する
+#### 原則3：障害影響範囲を限定する
 
 新しい機能の障害によって、センサー取得など既存機能まで停止しない構成を優先する。
 
-### 原則4：必要になってから複雑化する
+#### 原則4：必要になってから複雑化する
 
 将来使うかもしれない機能を、現在のシステムへ先回りして実装しない。
 
-### 原則5：設計変更を記録する
+#### 原則5：設計変更を記録する
 
 既存設計を変更する場合は、変更理由、影響範囲、代替案を整理する。
 
@@ -1722,21 +1933,21 @@ Process間、Workerとの間、Browserとの間でデータ形式と責務を明
 
 ### 24.21 将来拡張候補一覧
 
-| ID      | 拡張項目          | 概要                | 現時点 |
-| ------- | ------------- | ----------------- | --- |
-| EXT-001 | センサー追加        | 複数センサー対応          | 将来  |
-| EXT-002 | ローカル保存        | 未送信データの永続化        | 将来  |
-| EXT-003 | MQTT等         | 通信方式の変更・追加        | 将来  |
-| EXT-004 | 通信先追加         | 複数クラウド・サービス対応     | 将来  |
-| EXT-005 | Browser機能拡張   | 統計・状態表示等          | 将来  |
-| EXT-006 | アラート          | 閾値超過通知            | 将来  |
-| EXT-007 | 外部機器制御        | センサー情報による制御       | 将来  |
-| EXT-008 | Process追加     | 責務増加時のProcess分割   | 将来  |
-| EXT-009 | データモデル拡張      | センサーID等の追加        | 将来  |
-| EXT-010 | 重複排除          | SensorDataの一意性確保  | 将来  |
-| EXT-011 | セキュリティ強化      | 認証・アクセス制御等        | 将来  |
-| EXT-012 | 監視強化          | 外部監視・状態監視         | 将来  |
-| EXT-013 | 複数Edge Device | Raspberry Pi複数台対応 | 将来  |
+| ID | 拡張項目 | 概要 | 現時点 |
+|---|---|---|---|
+| EXT-001 | センサー追加 | 複数センサー対応 | 将来 |
+| EXT-002 | ローカル保存 | 未送信データの永続化 | 将来 |
+| EXT-003 | MQTT等 | 通信方式の変更・追加 | 将来 |
+| EXT-004 | 通信先追加 | 複数クラウド・サービス対応 | 将来 |
+| EXT-005 | Browser機能拡張 | 統計・状態表示等 | 将来 |
+| EXT-006 | アラート | 閾値超過通知 | 将来 |
+| EXT-007 | 外部機器制御 | センサー情報による制御 | 将来 |
+| EXT-008 | Process追加 | 責務増加時のProcess分割 | 将来 |
+| EXT-009 | データモデル拡張 | センサーID等の追加 | 将来 |
+| EXT-010 | 重複排除方式の拡張 | 複数Device等への対応 | 将来 |
+| EXT-011 | セキュリティ強化 | 認証・アクセス制御等 | 将来 |
+| EXT-012 | 監視強化 | 外部監視・状態監視 | 将来 |
+| EXT-013 | 複数Edge Device | Raspberry Pi複数台対応 | 将来 |
 
 ---
 
@@ -1753,8 +1964,11 @@ Process間、Workerとの間、Browserとの間でデータ形式と責務を明
 7. 通信方式やクラウド構成の変更は、要求が変化した場合に検討する。
 8. 将来拡張による障害影響範囲を可能な限り限定する。
 9. 現時点で不要な機能を先行実装しない。
+10. 現在の`data_id + timestamp`複合キー方式を基本とし、将来の要求変更時に一意性管理方式を再検討する。
 
 ---
+
+# 25. 設計全体レビュー
 
 ### 25.1 目的
 
@@ -1764,16 +1978,16 @@ Process間、Workerとの間、Browserとの間でデータ形式と責務を明
 
 設計レビューでは、以下を重点的に確認する。
 
-* 要求が設計へ反映されているか
-* 各設計間に矛盾がないか
-* 各コンポーネントの責務が明確か
-* 異常発生時の影響範囲が適切か
-* 復旧方法が定義されているか
-* Process間のインターフェースが明確か
-* 外部システムとのインターフェースが明確か
-* セキュリティ上の問題がないか
-* テストによって設計を検証できるか
-* 設計決定事項が関連章へ反映されているか
+* 要求が設計へ反映されているか。
+* 各設計間に矛盾がないか。
+* 各コンポーネントの責務が明確か。
+* 異常発生時の影響範囲が適切か。
+* 復旧方法が定義されているか。
+* Process間のインターフェースが明確か。
+* 外部システムとのインターフェースが明確か。
+* セキュリティ上の問題がないか。
+* テストによって設計を検証できるか。
+* 設計決定事項が関連章へ反映されているか。
 
 ---
 
@@ -1781,7 +1995,7 @@ Process間、Workerとの間、Browserとの間でデータ形式と責務を明
 
 レビュー対象は以下とする。
 
-```mermaid id="x8p4q2"
+```mermaid
 flowchart TB
     R["要求"]
     A["システムアーキテクチャ"]
@@ -1817,23 +2031,23 @@ flowchart TB
 
 システム要求と各設計の対応を確認する。
 
-| 要求                | 対応設計                         |
-| ----------------- | ---------------------------- |
-| センサーデータ取得         | センサー設計 / Sensor Process      |
-| センサーデータ処理         | Data Processing              |
-| センサーデータ送信         | Communication Process / 通信設計 |
-| Cloudflareへの保存    | Worker / D1インターフェース          |
-| 現在値表示             | Browser / Workerインターフェース     |
-| 履歴表示              | Browser / Worker / D1        |
-| グラフ表示             | Browser                      |
-| 周期的な取得            | 周期・タイミング設計                   |
-| 通信障害対応            | 異常系 / 障害復旧                   |
-| Process異常対応       | systemd / 障害復旧               |
-| Raspberry Pi再起動対応 | Lifecycle / systemd          |
-| 正常Shutdown        | Lifecycle                    |
-| ログ                | ログ・監視設計                      |
-| セキュリティ            | セキュリティ設計                     |
-| 長時間動作             | テスト・検証方針                     |
+| 要求 | 対応設計 |
+|---|---|
+| センサーデータ取得 | センサー設計 / Sensor Process |
+| センサーデータ処理 | Data Processing |
+| センサーデータ送信 | Communication Process / 通信設計 |
+| Cloudflareへの保存 | Worker / D1インターフェース |
+| 現在値表示 | Browser / Workerインターフェース |
+| 履歴表示 | Browser / Worker / D1 |
+| グラフ表示 | Browser |
+| 周期的な取得 | 周期・タイミング設計 |
+| 通信障害対応 | 異常系 / 障害復旧 |
+| Process異常対応 | systemd / 障害復旧 |
+| Raspberry Pi再起動対応 | Lifecycle / systemd |
+| 正常Shutdown | Lifecycle |
+| ログ | ログ・監視設計 |
+| セキュリティ | セキュリティ設計 |
+| 長時間動作 | テスト・検証方針 |
 
 要求に対応する設計が存在しない場合は、設計漏れとして扱う。
 
@@ -1843,7 +2057,7 @@ flowchart TB
 
 現在のシステム構成は以下を基本とする。
 
-```mermaid id="c9h4pd"
+```mermaid
 flowchart LR
     Sensor["DHT11"]
 
@@ -1887,11 +2101,11 @@ flowchart LR
 
 Process間の責務が重複していないことを確認する。
 
-| Process               | 主な責務                       |
-| --------------------- | -------------------------- |
-| Sensor Process        | DHT11取得、データ妥当性確認、IPC送信     |
+| Process | 主な責務 |
+|---|---|
+| Sensor Process | DHT11取得、データ妥当性確認、IPC送信 |
 | Communication Process | IPC受信、HTTP通信、Retry、Backoff |
-| systemd               | Process起動、停止、異常終了検知、再起動    |
+| systemd | Process起動、停止、異常終了検知、再起動 |
 
 特に、Sensor ProcessがCloudflareとの通信処理を直接担当しないことを確認する。
 
@@ -1905,7 +2119,7 @@ Process間の責務が重複していないことを確認する。
 
 Sensor ProcessとCommunication Process間のデータ受け渡しはIPC Message Queueを使用する。
 
-```mermaid id="j0z1pr"
+```mermaid
 flowchart LR
     SP["Sensor Process"]
     Queue["IPC Message Queue"]
@@ -1917,13 +2131,17 @@ flowchart LR
 
 レビュー項目：
 
-* Producer / Consumerが明確であること
-* FIFOを基本とすること
-* Queue Empty時にBusy Loopを行わないこと
-* Queue Full時に無限待ちしないこと
-* Process間で直接メモリを共有しないこと
-* IPC障害を異常として検出できること
-* Process再起動時にIPCを再初期化できること
+* Producer / Consumerが明確であること。
+* FIFOを基本とすること。
+* Queue Empty時にBusy Loopを行わないこと。
+* Queue Full時に無限待ちしないこと。
+* Process間で直接メモリを共有しないこと。
+* IPC障害を異常として検出できること。
+* Process再起動時にIPCを再初期化できること。
+
+Queue Full時は新規SensorDataを破棄し、Errorログを出力する。
+
+Queue容量は100件とし、Queueに残った未送信データは永続化しない。
 
 ---
 
@@ -1931,7 +2149,7 @@ flowchart LR
 
 Sensor ProcessとCommunication Processの周期を独立させる。
 
-```mermaid id="xq2r7m"
+```mermaid
 flowchart LR
     SP["Sensor Process"]
     Q["IPC Queue"]
@@ -1963,7 +2181,7 @@ Communication Processの遅延は、まずIPC Queueによって吸収する。
 
 Communication Processは以下の流れで通信する。
 
-```text id="jkj9yw"
+```text
 IPC受信
   ↓
 HTTP Request生成
@@ -1979,17 +2197,21 @@ HTTP Response
 
 HTTPステータスによる基本的な扱いは以下とする。
 
-| 結果                 | 基本方針       |
-| ------------------ | ---------- |
-| 2xx                | 成功         |
-| 4xx                | 原則Retryしない |
-| 5xx                | Retry候補    |
-| Timeout            | Retry候補    |
-| DNS Failure        | Retry候補    |
-| Connection Failure | Retry候補    |
-| TLS / 通信エラー        | 通信異常として処理  |
+| 結果 | 基本方針 |
+|---|---|
+| 2xx | 成功 |
+| 4xx | 原則Retryしない |
+| 5xx | Retry候補 |
+| Timeout | Retry候補 |
+| DNS Failure | Retry候補 |
+| Connection Failure | Retry候補 |
+| TLS / 通信エラー | 通信異常として処理 |
 
 RetryおよびBackoffはCommunication Processが担当する。
+
+Retry回数は初回送信後最大3回とし、Retry間隔は1秒、2秒、4秒とする。
+
+HTTP Timeoutは5秒とする。
 
 ---
 
@@ -1997,7 +2219,7 @@ RetryおよびBackoffはCommunication Processが担当する。
 
 HTTP Timeoutが発生した場合、以下のケースが存在する。
 
-```mermaid id="e5u7az"
+```mermaid
 sequenceDiagram
     participant C as Communication Process
     participant W as Worker
@@ -2010,13 +2232,16 @@ sequenceDiagram
     Note over C: Response受信前にTimeout
     C->>W: Retry
     W->>D: INSERT
+    Note over W,D: 複合キーにより重複保存を防止
 ```
 
-この場合、Worker側では同じデータが複数回保存される可能性がある。
+この場合、Worker側では同じデータが複数回受信される可能性がある。
 
-したがって、将来的にデータの一意性が重要になった場合はSensorData IDなどによる重複排除を導入する。
+そのため、現在の設計では`data_id + timestamp`の複合キー方式を採用し、同一データの重複保存を防止する。
 
-この問題を設計上の認識事項として管理する。
+検証では、同一の`data_id`と`timestamp`を持つSensorDataを複数回送信し、D1に重複登録されないことを確認する。
+
+この方式は通信Retryに対する冪等性を確保するものであり、完全なリプレイ攻撃対策を意味するものではない。
 
 ---
 
@@ -2024,7 +2249,7 @@ sequenceDiagram
 
 Process Lifecycleと内部状態を混同しない。
 
-```mermaid id="x0e5zs"
+```mermaid
 flowchart TB
     Process["Process Lifecycle"]
 
@@ -2055,7 +2280,7 @@ Sensor Process内部ではセンサー取得状態を管理し、Communication P
 
 異常は、発生場所に応じて影響範囲を限定する。
 
-```mermaid id="x3m8af"
+```mermaid
 flowchart LR
     Sensor["Sensor Process"]
     IPC["IPC"]
@@ -2087,7 +2312,7 @@ flowchart LR
 
 復旧レベルを以下とする。
 
-```text id="4c5e8x"
+```text
 Level 1
 一時的な処理エラー
         ↓
@@ -2122,7 +2347,7 @@ Level 5
 
 Raspberry Pi起動からシステム停止までの流れを以下とする。
 
-```mermaid id="n6a2wq"
+```mermaid
 flowchart TB
     Boot["Raspberry Pi Boot"]
     Systemd["systemd"]
@@ -2145,9 +2370,13 @@ flowchart TB
 
 Sensor ProcessとCommunication Processは独立したsystemd Unitとして管理する。
 
-Networkが利用できない状態でCommunication Processが起動する可能性を考慮し、Network利用不可だけを理由としてProcessを終了させる設計にはしない。
+Networkが利用できない状態でもCommunication Processが起動できることを基本とし、Network利用不可だけを理由としてProcessを終了させない。
 
 Communication ProcessはNetwork復旧後に通信を再開できる構成とする。
+
+この方針とsystemd Unitの依存関係が一致していることを、実際のUnit設定および実機テストで確認する。
+
+特に、`network-online.target`などのNetwork依存設定によって、Network未接続時にCommunication Processの起動が不必要に阻害されないことを確認する。
 
 ---
 
@@ -2155,16 +2384,18 @@ Communication ProcessはNetwork復旧後に通信を再開できる構成とす�
 
 正常Shutdownでは、以下の順序を基本とする。
 
-```text id="6mbqyo"
+```text
 Shutdown要求
     ↓
 Sensor Process
 新規取得停止
     ↓
-Queue残存データ処理
+Sensor Process終了
     ↓
 Communication Process
 新規通信停止
+    ↓
+Queue残存データ破棄
     ↓
 リソース解放
     ↓
@@ -2174,6 +2405,8 @@ OS Shutdown
 ```
 
 Queueに残っているSensorDataは、永続化せずShutdown完了時に破棄する。
+
+Sensor Processの停止完了後にCommunication Processを停止する順序が、systemd Unitの依存関係によって実現されていることを確認する。
 
 ---
 
@@ -2192,6 +2425,7 @@ Queueに残っているSensorDataは、永続化せずShutdown完了時に破棄
 * Processは可能な限り最小権限で実行する。
 * Wi-Fi認証情報も秘密情報として扱う。
 * Workerのエラー応答に内部情報を含めない。
+* `data_id + timestamp`の複合キー方式によって通信Retry時の重複保存を防止する。
 
 ---
 
@@ -2201,7 +2435,7 @@ Queueに残っているSensorDataは、永続化せずShutdown完了時に破棄
 
 基本ログ情報：
 
-```text id="1n7n3y"
+```text
 Timestamp
 Log Level
 Process
@@ -2232,6 +2466,7 @@ Message
 * Wi-Fi Password
 * Private Key
 * Cookie
+* Shared Secret
 * その他の秘密情報
 
 ---
@@ -2240,7 +2475,7 @@ Message
 
 設計された各機能および異常系について、検証方法が存在することを確認する。
 
-```mermaid id="5x0j7k"
+```mermaid
 flowchart LR
     Requirement["要求"]
     Design["設計"]
@@ -2272,15 +2507,32 @@ flowchart LR
 * Worker保存
 * Browser表示
 * セキュリティ
+* 重複送信時の冪等性
 * 長時間動作
 
 ---
 
 ### 25.18 設計決定事項の確認
 
-23章で確認した設計決定事項について、関連する設計章へ反映されていることを確認する。
+23章で確認したPND-001～PND-020について、各決定事項が関連する設計章へ反映されていることを確認する。
 
-PND-001～PND-020がすべて本決定済みであり、関連章へ反映されていることを確認する。
+特に、以下の項目については重点的に照合する。
+
+* SensorDataの型・精度・timestamp・data_id
+* Queue容量とQueue Full時の処理
+* 未送信データおよびShutdown時データの扱い
+* Retry回数・間隔・Backoff
+* HTTP Timeout
+* Worker認証と秘密情報保管
+* Browserアクセス制御
+* Process実行ユーザー
+* systemd Restart設定
+* ログ保持期間
+* 長時間動作テスト時間
+* リソース使用量の判定基準
+* `data_id + timestamp`による重複排除
+
+決定事項と関連章の記述が一致していない場合は、設計不整合として扱い、実装開始前に修正する。
 
 ---
 
@@ -2290,7 +2542,7 @@ PND-001～PND-020がすべて本決定済みであり、関連章へ反映され
 
 現在の基本構成：
 
-```text id="k8y8m4"
+```text
 DHT11
  ↓
 Sensor Process
@@ -2316,70 +2568,71 @@ Browser
 
 本設計における主要な判断を以下にまとめる。
 
-| 項目               | 採用方式                                   |
-| ---------------- | -------------------------------------- |
-| Edge Device      | Raspberry Pi 4B                        |
-| OS               | Raspberry Pi OS                        |
-| Edge Application | C++                                    |
-| センサー             | DHT11                                  |
-| Process構成        | Sensor Process / Communication Process |
-| Process間通信       | IPC Message Queue                      |
-| 通信               | HTTPS                                  |
-| Cloud側入口         | Cloudflare Worker                      |
-| データ保存            | Cloudflare D1                          |
-| Browser          | Worker経由で参照                            |
-| Process管理        | systemd                                |
-| Retry            | Communication Process                  |
-| 障害分離             | Process単位                              |
-| ログ               | Process / Event単位                      |
-| セキュリティ           | HTTPS / 認証 / 最小権限                      |
-| 将来拡張             | 現在の責務分離を維持                             |
+| 項目 | 採用方式 |
+|---|---|
+| Edge Device | Raspberry Pi 4B |
+| OS | Raspberry Pi OS |
+| Edge Application | C++ |
+| センサー | DHT11 |
+| Process構成 | Sensor Process / Communication Process |
+| Process間通信 | IPC Message Queue |
+| 通信 | HTTPS |
+| Cloud側入口 | Cloudflare Worker |
+| データ保存 | Cloudflare D1 |
+| Browser | Worker経由で参照 |
+| Process管理 | systemd |
+| Retry | Communication Process |
+| 障害分離 | Process単位 |
+| ログ | Process / Event単位 |
+| セキュリティ | HTTPS / 認証 / 最小権限 |
+| 重複排除 | `data_id + timestamp`複合キー |
+| 将来拡張 | 現在の責務分離を維持 |
 
 ---
 
 ### 25.21 設計レビュー結果
 
-現時点の設計について、以下を確認する。
+本設計について、以下の観点で確認する。
 
 #### 25.21.1 要求
 
-要求から各設計への対応関係が定義されている。
+要求から各設計への対応関係が定義されていること。
 
 #### 25.21.2 アーキテクチャ
 
-Raspberry Piを中心としたEdge IoTシステムとして構成されている。
+Raspberry Piを中心としたEdge IoTシステムとして構成されていること。
 
 #### 25.21.3 Process
 
-Sensor ProcessとCommunication Processを分離し、障害影響範囲を限定している。
+Sensor ProcessとCommunication Processを分離し、障害影響範囲を限定していること。
 
 #### 25.21.4 IPC
 
-Process間のデータ受け渡しをIPC Message Queueとして定義している。
+Process間のデータ受け渡しをIPC Message Queueとして定義していること。
 
 #### 25.21.5 通信
 
-Communication ProcessがHTTPSによってWorkerへSensorDataを送信する構成となっている。
+Communication ProcessがHTTPSによってWorkerへSensorDataを送信する構成となっていること。
 
 #### 25.21.6 異常・復旧
 
-異常検出、Retry、再初期化、Process再起動、システム再起動という復旧レベルを定義している。
+異常検出、Retry、再初期化、Process再起動、システム再起動という復旧レベルを定義していること。
 
 #### 25.21.7 Lifecycle
 
-起動、通常動作、Shutdown、Process終了、再起動について設計している。
+起動、通常動作、Shutdown、Process終了、再起動について設計していること。
 
 #### 25.21.8 systemd
 
-Process単位でsystemd管理する方針を定義している。
+Process単位でsystemd管理する方針を定義していること。
 
 #### 25.21.9 セキュリティ
 
-HTTPS、認証、秘密情報保護、Workerによる入力検証などの基本方針を定義している。
+HTTPS、認証、秘密情報保護、Workerによる入力検証などの基本方針を定義していること。
 
 #### 25.21.10 テスト
 
-正常系、異常系、復旧、再起動、Shutdown、セキュリティ、長時間動作を検証対象としている。
+正常系、異常系、復旧、再起動、Shutdown、セキュリティ、長時間動作を検証対象としていること。
 
 ---
 
@@ -2387,47 +2640,54 @@ HTTPS、認証、秘密情報保護、Workerによる入力検証などの基本
 
 実装開始前に、以下の決定事項が関連章へ反映されていることを確認する。
 
-- SensorDataの型・精度・timestamp・data_id
-- Queue容量とQueue Full時の処理
-- 未送信データおよびShutdown時データの扱い
-- Retry回数・間隔・Backoff
-- HTTP Timeout
-- Worker認証と秘密情報保管
-- Browserアクセス制御
-- Process実行ユーザー
-- systemd Restart設定
-- ログ保持期間
-- 長時間動作テスト時間
-- リソース使用量の判定基準
-- SensorData重複排除
+* SensorDataの型・精度・timestamp・data_id
+* Queue容量とQueue Full時の処理
+* 未送信データおよびShutdown時のデータの扱い
+* Retry回数・間隔・Backoff
+* HTTP Timeout
+* Worker認証と秘密情報保管
+* Browserアクセス制御
+* Process実行ユーザー
+* systemd Restart設定
+* systemd Unit間の起動・停止順序
+* Network未接続時のCommunication Process起動条件
+* ログ保持期間
+* 長時間動作テスト時間
+* リソース使用量の判定基準
+* `data_id + timestamp`による重複排除
 
-すべて決定済みであり、未解決の設計事項は残さない。
+各項目について、関連設計との整合性を確認し、未解決事項がある場合は実装開始前に解決する。
+
+---
 
 ### 25.23 設計完了条件
 
 以下をすべて満たした場合、本設計を実装開始可能な状態と判断する。
 
-* システム要求が定義されている
-* システム境界が明確である
-* システムアーキテクチャが定義されている
-* ソフトウェア責務が定義されている
-* Process構成が定義されている
-* IPC方式が定義されている
-* データ構造が定義されている
-* 通信方式が定義されている
-* 状態遷移が定義されている
-* 異常系が定義されている
-* 復旧方針が定義されている
-* Lifecycleが定義されている
-* systemd設定方針が定義されている
-* セキュリティ方針が定義されている
-* テスト方針が定義されている
-* PND-001～PND-020がすべて本決定済みである
-* 決定事項が関連する設計章へ反映されている
-* 将来拡張方針が定義されている
-* 各設計間の重大な矛盾が解消されている
+* システム要求が定義されている。
+* システム境界が明確である。
+* システムアーキテクチャが定義されている。
+* ソフトウェア責務が定義されている。
+* Process構成が定義されている。
+* IPC方式が定義されている。
+* データ構造が定義されている。
+* 通信方式が定義されている。
+* 状態遷移が定義されている。
+* 異常系が定義されている。
+* 復旧方針が定義されている。
+* Lifecycleが定義されている。
+* systemd設定方針が定義されている。
+* セキュリティ方針が定義されている。
+* テスト方針が定義されている。
+* PND-001～PND-020がすべて本決定済みである。
+* 決定事項が関連する設計章へ反映されている。
+* 将来拡張方針が定義されている。
+* 各設計間の重大な矛盾が解消されている。
+* 実装開始を妨げる未解決事項がない。
 
-以上を満たしているため、本設計は実装開始可能な状態とする。
+上記の条件を確認したうえで、本設計の実装開始可否を判定する。
+
+---
 
 ### 25.24 設計レビュー完了後の方針
 
@@ -2435,7 +2695,7 @@ HTTPS、認証、秘密情報保護、Workerによる入力検証などの基本
 
 実装中に設計変更が必要となった場合は、実装を優先して設計書を後追いで変更するのではなく、
 
-```mermaid id="f2r6qk"
+```mermaid
 flowchart LR
     Problem["設計変更が必要"]
     Impact["影響確認"]
@@ -2459,7 +2719,7 @@ flowchart LR
 
 本設計で定義したシステムの基本構成を以下に示す。
 
-```mermaid id="v7x5c1"
+```mermaid
 flowchart LR
     Sensor["DHT11<br/>温湿度センサー"]
 
@@ -2501,7 +2761,7 @@ flowchart LR
 
 本設計では、
 
-```text id="n6c8v2"
+```text
 要求
  ↓
 システム構成
