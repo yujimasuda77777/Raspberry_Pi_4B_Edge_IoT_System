@@ -809,6 +809,8 @@ IPC Message Queueは揮発性の一時バッファであり、電源断後にデ
 | 復旧結果 | 復旧成功 / 失敗 |
 | 関連情報 | 必要に応じた追加情報 |
 
+SensorDataに関連する異常については、`data_id`と`timestamp`の複合キーを記録し、Sensor ProcessとCommunication Processのログを関連付けられるようにする。
+
 秘密情報や認証情報など、セキュリティ上記録すべきでない情報はログへ出力しない。
 
 ### 15.21 異常処理一覧
@@ -1475,8 +1477,6 @@ flowchart TD
 | データ損失 | データ損失の有無 |
 | 備考 | 必要な追加情報 |
 
-これにより、障害発生から復旧までの経緯を確認できるようにする。
-
 ### 16.26 障害復旧方式一覧
 
 | 障害 | 復旧方法 | 上位復旧 |
@@ -1570,7 +1570,7 @@ flowchart TD
 
 ### 17.4 ログ出力対象
 
-本システムでは、以下の処理を主なログ出力対象とする。
+本システムでは、以下を主なログ出力対象とする。
 
 ```mermaid
 flowchart TB
@@ -1888,7 +1888,7 @@ HTTP応答
 
 という一連の処理を追跡しやすくなる。
 
-識別子にはSensorDataのdata_idを使用する。
+識別子にはSensorDataの`data_id`と`timestamp`の複合キーを使用する。これにより、Process再起動後も含めてSensorDataを識別できるようにする。
 
 ### 17.15 ログ出力しない情報
 
@@ -2457,7 +2457,7 @@ Process異常終了時のRestart条件は、systemdのService設定に従う。
 
 Raspberry Piを正常にShutdownする場合、OSからProcessへ停止要求が通知される。
 
-基本的な流れを以下とする。
+基本的な流れを以下に示す。
 
 ```mermaid
 sequenceDiagram
@@ -2470,12 +2470,11 @@ sequenceDiagram
     User->>OS: Shutdown要求
     OS->>SD: Process停止
     SD->>S: Stop要求
-    SD->>C: Stop要求
-
     S->>S: Sensor取得停止
-    C->>C: 通信停止・未送信データ破棄
-
     S-->>SD: Process終了
+
+    SD->>C: Stop要求
+    C->>C: 新規通信停止・未送信データ破棄
     C-->>SD: Process終了
 
     SD-->>OS: Process停止完了
@@ -2511,11 +2510,11 @@ Communication Process起動・Queue接続
 ```text
 Shutdown要求
     ↓
-Sensor取得停止
+Sensor Processの新規取得停止
     ↓
 新規データ生成停止
     ↓
-Communication Process停止
+Communication Processの新規通信停止
     ↓
 未送信データ破棄
     ↓
