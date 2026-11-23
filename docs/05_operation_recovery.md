@@ -1,12 +1,16 @@
+
+
+# 05. 運用・障害復旧設計
+
 ## 14. 状態遷移設計
 
 ### 14.1 状態遷移設計の目的
 
 本章では、Edge Applicationを構成する各Processおよび通信処理について、状態と状態遷移を定義する。
 
-本システムでは、Sensor ProcessとCommunication Processを独立したProcessとして構成するため、それぞれの状態を分離して管理する。
+本システムではSensor ProcessとCommunication Processを独立したProcessとして構成するため、それぞれの状態を分離して管理する。
 
-また、Process自身のライフサイクル状態と、Communication Process内部の通信状態は異なる概念として扱う。
+また、Process自身のLifecycle状態と、Communication Process内部の通信状態は異なる概念として扱う。
 
 ### 14.2 状態の分類
 
@@ -52,7 +56,7 @@ stateDiagram-v2
     QUEUE_SEND --> READY : Queue送信成功
     QUEUE_SEND --> ERROR : Queue送信失敗
 
-    ERROR --> READY : 復旧可能
+    ERROR --> READY : 異常処理終了
     ERROR --> STOPPING : 停止要求
 
     READY --> STOPPING : 停止要求
@@ -62,40 +66,35 @@ stateDiagram-v2
     STOPPING --> STOPPED
 
     STOPPED --> [*]
-
 ```
 
-Sensor Processでは、DHT11からの取得に失敗した場合でも、Process全体を直ちに終了させるとは限らない。
+DHT11からのデータ取得に失敗した場合、その取得周期内で再取得は行わない。
 
-異常内容に応じて、再取得などの復旧処理を行う。
+取得失敗を記録した後、Sensor Processは次の取得周期まで通常動作を継続する。センサー取得失敗によってProcess全体を直ちに終了させることはしない。
 
-具体的なRetry回数、再取得間隔、異常判定条件については、異常系設計で決定する。
-
+Queue Fullの場合は、新規SensorDataを破棄し、次回取得周期へ移行する。
 
 ### 14.4 Communication Processの状態
 
 Communication Processでは、以下の状態を定義する。
 
-| 状態            | 内容                         |
-| ------------- | -------------------------- |
-| INIT          | 初期化中                       |
-| READY         | 通信処理を開始可能な状態               |
-| WAIT_DATA     | IPC Message Queueからデータを待機中 |
-| SEND          | Cloudflare Workerへデータ送信中   |
-| WAIT_RESPONSE | HTTP Responseを待機中          |
-| SUCCESS       | 通信成功                       |
-| RETRY         | Retry実行準備中                 |
-| BACKOFF       | Retry間隔を待機中                |
-| ERROR         | 通信継続が困難な異常状態               |
-| STOPPING      | 停止処理中                      |
-| STOPPED       | 停止完了                       |
-
+| 状態 | 内容 |
+|---|---|
+| INIT | 初期化中 |
+| READY | 通信処理を開始可能な状態 |
+| WAIT_DATA | IPC Message Queueからデータを待機中 |
+| SEND | Cloudflare Workerへデータ送信中 |
+| WAIT_RESPONSE | HTTP Responseを待機中 |
+| SUCCESS | 通信成功 |
+| RETRY | Retry実行準備中 |
+| BACKOFF | Retry間隔を待機中 |
+| ERROR | 通信処理で異常を検出した状態 |
+| STOPPING | 停止処理中 |
+| STOPPED | 停止完了 |
 
 基本的な状態遷移を以下に示す。
 
-
 ```mermaid
-
 stateDiagram-v2
     [*] --> INIT
 
@@ -114,92 +113,94 @@ stateDiagram-v2
     WAIT_RESPONSE --> ERROR : HTTP 4xx
 
     SUCCESS --> WAIT_DATA
+    ERROR --> WAIT_DATA : 対象データ破棄・処理継続
 
     RETRY --> BACKOFF : Retry可能
-    RETRY --> ERROR : Retry不可
+    RETRY --> ERROR : Retry上限到達
 
     BACKOFF --> SEND : Backoff終了
-
-    ERROR --> WAIT_DATA : 復旧可能
-    ERROR --> STOPPING : 停止要求
 
     WAIT_DATA --> STOPPING : 停止要求
     SEND --> STOPPING : 停止要求
     WAIT_RESPONSE --> STOPPING : 停止要求
     BACKOFF --> STOPPING : 停止要求
+    ERROR --> STOPPING : 停止要求
 
     STOPPING --> STOPPED
     STOPPED --> [*]
-
 ```
 
+HTTP 4xxは原則としてRetry対象としない。対象SensorDataを破棄し、異常を記録した後、次のデータ処理へ移行する。
+
+HTTP 5xx、Timeout、DNS失敗および接続失敗は一時的な通信障害の可能性があるため、Retry対象とする。
+
+Retry上限に到達した場合は対象SensorDataを破棄し、次のデータ処理へ移行する。
 
 ### 14.5 HTTP応答による状態遷移
 
 HTTP通信結果については、以下の基本方針とする。
 
-| 結果       | 基本方針          | 次状態       |
-| -------- | ------------- | --------- |
-| HTTP 2xx | 成功として処理       | WAIT_DATA |
-| HTTP 4xx | 原則としてRetryしない | ERROR     |
-| HTTP 5xx | 一時的障害の可能性あり   | RETRY     |
-| Timeout  | Retry対象       | RETRY     |
-| DNS失敗    | Retry対象       | RETRY     |
-| 接続失敗     | Retry対象       | RETRY     |
+| 結果 | 基本方針 | 次状態 |
+|---|---|---|
+| HTTP 2xx | 成功として処理 | WAIT_DATA |
+| HTTP 4xx | Retryせず対象データを破棄 | WAIT_DATA |
+| HTTP 5xx | Retry対象 | RETRY |
+| Timeout | Retry対象 | RETRY |
+| DNS失敗 | Retry対象 | RETRY |
+| 接続失敗 | Retry対象 | RETRY |
 
+HTTP 4xxはRequest内容、認証情報または送信データなどに問題がある可能性が高いため、同一Requestを無条件に再送しない。
 
-ただし、HTTP 4xxであっても、将来的に特定のステータスコードをRetry対象とする必要が生じた場合は、通信設計で見直す。
+HTTP 4xxを受信した場合は、異常を記録して対象SensorDataを破棄し、Communication Processは次のデータ処理へ進む。
 
 ### 14.6 Retry / Backoffの状態遷移
 
 通信失敗時には、直ちに連続してRequestを送信するのではなく、Backoffを設ける。
 
 ```mermaid
+flowchart LR
+    Send["送信"]
+    Result{"通信結果"}
 
-    flowchart LR
-        Send["送信"]
-        Result{"通信結果"}
+    Success["成功"]
+    Retry["Retry判定"]
+    Backoff["Backoff"]
+    Discard["対象データ破棄"]
+    Next["次のデータ処理"]
 
-        Success["成功"]
-        Retry["Retry判定"]
-        Backoff["Backoff"]
-        Error["異常"]
-        
-        Send --> Result
+    Send --> Result
 
-        Result -->|2xx| Success
-        Result -->|Timeout / DNS / 接続失敗 / 5xx| Retry
-        Result -->|4xx| Error
+    Result -->|2xx| Success
+    Result -->|Timeout / DNS / 接続失敗 / 5xx| Retry
+    Result -->|4xx| Discard
 
-        Retry -->|Retry可能| Backoff
-        Retry -->|Retry回数超過など| Error
+    Retry -->|Retry可能| Backoff
+    Retry -->|Retry上限到達| Discard
 
-        Backoff --> Send
-
+    Backoff --> Send
+    Success --> Next
+    Discard --> Next
 ```
 
+通信Retryは、初回送信に加えて最大3回までとする。
 
-Retry処理では、以下を考慮する。
+Retry間隔は以下とする。
 
-Retry回数
-Retry間隔
-Backoff方式
-最大Backoff時間
-Retry対象となるエラー
-Retry終了条件
-Retry中に新しいSensorDataを受信した場合の扱い
+| Retry回数 | 待機時間 |
+|---|---:|
+| 1回目 | 1秒 |
+| 2回目 | 2秒 |
+| 3回目 | 4秒 |
 
-具体的な数値およびデータ保持方式は、異常系設計および障害復旧設計で決定する。
+Retry上限に到達した場合は、対象SensorDataを破棄して次のデータ処理へ移行する。
 
-
-
+Retry中に新しいSensorDataがQueueへ蓄積される場合がある。Communication Processは現在処理中のSensorDataに対するRetryを終了した後、次のデータを処理する。
 
 ### 14.7 IPC状態との関係
 
 Sensor ProcessとCommunication Processは、IPC Message Queueを介してデータを受け渡す。
 
 ```mermaid
-
 flowchart LR
     Sensor["Sensor Process"]
 
@@ -223,17 +224,15 @@ flowchart LR
     Wait --> Send
     Send --> Retry
     Retry --> Send
-
 ```
 
 Sensor ProcessとCommunication Processは、IPC Message Queueを境界として独立して動作する。
 
-そのため、Communication Processで通信処理に時間がかかった場合でも、Sensor ProcessはSensorDataの取得を継続できる。
+Communication Processで通信処理に時間がかかった場合でも、Sensor Processはセンサーデータの取得を継続する。
 
 ただし、Communication Processの処理時間が長時間継続するとIPC Message Queueにデータが蓄積する可能性がある。
 
-この場合のQueue Fullへの対応については、異常系設計および障害復旧設計で定義する。
-
+QueueがFullになった場合は、新規SensorDataを破棄する。Sensor Processを待機させたり、既存データを上書きしたりしない。
 
 ### 14.8 Process状態と通信状態の分離
 
@@ -243,22 +242,20 @@ Sensor ProcessとCommunication Processは、IPC Message Queueを境界として�
 
 Communication Process
 
-　　　└─ Process状態：RUNNING　　　
+　└─ Process状態：RUNNING
 
-　　　　　└─ 通信状態：BACKOFF
+　　　└─ 通信状態：BACKOFF
 
 これは、Communication Process自体は正常に動作しているものの、Cloudflare Workerとの通信に失敗し、Retryのため待機している状態を表す。
 
 同様に、Sensor Processについても、センサー取得異常とProcess異常終了を区別する。
 
-この分離により、
+この分離により、以下をそれぞれ異なる事象として扱える構造とする。
 
 - センサー異常
 - 通信異常
 - IPC異常
 - Process異常終了
-
-をそれぞれ異なる事象として扱える構造とする。
 
 ### 14.9 起動・停止との関係
 
@@ -278,35 +275,37 @@ flowchart TD
 
     SensorInit --> Normal
     CommInit --> Normal
-
 ```
 
-実際のProcess起動順序およびIPC Message Queueの生成・利用開始条件については、Lifecycle / Shutdown設計およびsystemd設計で詳細化する。
+Sensor ProcessはIPC Message Queueを生成・管理する。Communication Processは既存のQueueへ接続する。
 
-停止時は、実行中の処理を適切に停止し、IPC Message Queueなどのリソースを解放してProcessを終了する。
+Communication Processの起動時点でQueueが存在しない場合は、Queueへの接続を再試行する。
 
-停止時にIPC Message Queueへ残っている未送信データをどのように扱うかについては、障害復旧設計で決定する。
+停止時は、新規処理を停止し、IPC Message Queueなどのリソースを解放してProcessを終了する。
 
+停止時にIPC Message Queueへ残っている未送信データは永続化せず、Shutdown完了時に破棄する。
 
 ### 14.10 状態遷移設計の方針
 
 本システムでは、以下の方針で状態を管理する。
 
-| 項目                    | 方針                      |
-| --------------------- | ----------------------- |
-| Sensor Process        | センサー取得状態を管理する           |
-| Communication Process | 通信状態を管理する               |
-| IPC                   | Process間のデータ受け渡し状態として扱う |
-| 通信失敗                  | Retry / Backoffを使用する    |
-| HTTP 4xx              | 原則Retryしない              |
-| HTTP 5xx              | Retry対象とする              |
-| Timeout               | Retry対象とする              |
-| Process異常終了           | Process自身の状態とは分離して扱う    |
-| 停止要求                  | 各Processが停止処理へ遷移する      |
-| 詳細な復旧方法               | 異常系・障害復旧設計で定義する         |
-
+| 項目 | 方針 |
+|---|---|
+| Sensor Process | センサー取得状態を管理する |
+| Communication Process | 通信状態を管理する |
+| IPC | Process間のデータ受け渡しに使用する |
+| 通信失敗 | Retry / Backoffを使用する |
+| HTTP 4xx | Retryせず対象データを破棄する |
+| HTTP 5xx | Retry対象とする |
+| Timeout | Retry対象とする |
+| Queue Full | 新規SensorDataを破棄する |
+| Process異常終了 | Process自身の状態とは分離して扱う |
+| 停止要求 | 各Processが停止処理へ遷移する |
+| 詳細な復旧方法 | 異常系・障害復旧設計で定義する |
 
 状態遷移は、単なるエラー処理のためだけではなく、システムが現在どの処理段階にあるかを明確にし、異常発生時の判断および復旧処理につなげるために使用する。
+
+---
 
 ## 15. 異常系設計
 
@@ -314,13 +313,11 @@ flowchart TD
 
 本章では、本システムにおいて発生する可能性のある異常を分類し、異常の検出方法、異常発生時の基本的な処理方針および正常状態への復帰方針を定義する。
 
-本システムでは、Sensor ProcessとCommunication Processを独立したProcessとして構成している。
+本システムではSensor ProcessとCommunication Processを独立したProcessとして構成している。
 
 そのため、センサー異常、通信異常、IPC異常およびProcess異常を区別して扱う。
 
 具体的な障害からの復旧方法については、後続の「16. 障害復旧設計」で定義する。
-
----
 
 ### 15.2 異常系設計の基本方針
 
@@ -354,55 +351,49 @@ flowchart LR
 
 異常発生時に、正常なProcessまで不要に停止させないことを基本とする。
 
----
-
 ### 15.3 異常の分類
 
 本システムで想定する主な異常を以下に示す。
 
-| ID      | 異常分類      | 異常内容                                  |
-| ------- | --------- | ------------------------------------- |
-| ABN-001 | センサー異常    | DHT11からデータを取得できない                     |
-| ABN-002 | センサー異常    | DHT11から取得したデータが不正                     |
-| ABN-003 | IPC異常     | IPC Message Queueへの送信に失敗する            |
-| ABN-004 | IPC異常     | IPC Message Queueからデータを受信できない         |
-| ABN-005 | Queue異常   | IPC Message QueueがFullになる             |
-| ABN-006 | ネットワーク異常  | Wi-Fi接続が失われる                          |
-| ABN-007 | 通信異常      | DNS名前解決に失敗する                          |
-| ABN-008 | 通信異常      | Cloudflare Workerへ接続できない              |
-| ABN-009 | 通信異常      | HTTP通信がTimeoutする                      |
-| ABN-010 | 通信異常      | HTTP 4xxを受信する                         |
-| ABN-011 | 通信異常      | HTTP 5xxを受信する                         |
-| ABN-012 | 通信異常      | Cloudflare Workerから期待しないResponseを受信する |
-| ABN-013 | Process異常 | Sensor Processが異常終了する                 |
-| ABN-014 | Process異常 | Communication Processが異常終了する          |
-| ABN-015 | システム異常    | Raspberry Piが再起動する                    |
-| ABN-016 | システム異常    | 電源断が発生する                              |
-
----
+| ID | 異常分類 | 異常内容 |
+|---|---|---|
+| ABN-001 | センサー異常 | DHT11からデータを取得できない |
+| ABN-002 | センサー異常 | DHT11から取得したデータが不正 |
+| ABN-003 | IPC異常 | IPC Message Queueへの送信に失敗する |
+| ABN-004 | IPC異常 | IPC Message Queueからデータを受信できない |
+| ABN-005 | Queue異常 | IPC Message QueueがFullになる |
+| ABN-006 | ネットワーク異常 | Wi-Fi接続が失われる |
+| ABN-007 | 通信異常 | DNS名前解決に失敗する |
+| ABN-008 | 通信異常 | Cloudflare Workerへ接続できない |
+| ABN-009 | 通信異常 | HTTP通信がTimeoutする |
+| ABN-010 | 通信異常 | HTTP 4xxを受信する |
+| ABN-011 | 通信異常 | HTTP 5xxを受信する |
+| ABN-012 | 通信異常 | Cloudflare Workerから期待しないResponseを受信する |
+| ABN-013 | Process異常 | Sensor Processが異常終了する |
+| ABN-014 | Process異常 | Communication Processが異常終了する |
+| ABN-015 | システム異常 | Raspberry Piが再起動する |
+| ABN-016 | システム異常 | 電源断が発生する |
 
 ### 15.4 異常処理の責務
 
 異常が発生した場合、原則として異常が発生したProcessが最初の検出および判定を担当する。
 
-| 異常                 | 主な検出・処理担当             |
-| ------------------ | --------------------- |
-| DHT11取得失敗          | Sensor Process        |
-| センサーデータ異常          | Sensor Process        |
-| IPC送信失敗            | Sensor Process        |
-| IPC受信異常            | Communication Process |
-| Queue Full         | Sensor Process        |
+| 異常 | 主な検出・処理担当 |
+|---|---|
+| DHT11取得失敗 | Sensor Process |
+| センサーデータ異常 | Sensor Process |
+| IPC送信失敗 | Sensor Process |
+| IPC受信異常 | Communication Process |
+| Queue Full | Sensor Process |
 | Wi-Fi / DNS / 接続異常 | Communication Process |
-| HTTP Timeout       | Communication Process |
-| HTTP 4xx           | Communication Process |
-| HTTP 5xx           | Communication Process |
-| Process異常終了        | systemd等のプロセス管理機構     |
-| Raspberry Pi再起動    | systemd / OS          |
-| 電源断                | OS / ハードウェア           |
+| HTTP Timeout | Communication Process |
+| HTTP 4xx | Communication Process |
+| HTTP 5xx | Communication Process |
+| Process異常終了 | systemd等のProcess管理機構 |
+| Raspberry Pi再起動 | systemd / OS |
+| 電源断 | OS / ハードウェア |
 
 異常処理の責務を明確にすることで、異常発生時に複数のProcessが同一の異常を重複して処理することを避ける。
-
----
 
 ### 15.5 DHT11取得異常
 
@@ -414,32 +405,24 @@ DHT11から温度または湿度を取得できなかった場合、Sensor Proce
 flowchart TD
     Acquire["DHT11データ取得"]
     Result{"取得成功?"}
-    Retry["再取得"]
-    Count{"再取得可能?"}
-    Error["センサー異常"]
-    Continue["センサー取得継続"]
+    Error["センサー異常記録"]
+    Next["次回取得周期まで待機"]
+    Continue["次回取得処理"]
 
     Acquire --> Result
 
     Result -->|Yes| Continue
-    Result -->|No| Retry
+    Result -->|No| Error
 
-    Retry --> Count
-    Count -->|Yes| Acquire
-    Count -->|No| Error
-
-    Error --> Continue
+    Error --> Next
+    Next --> Continue
 ```
 
-一時的な取得失敗については、一定の条件のもとで再取得を行う。
+DHT11の取得失敗時は、その取得周期内で再取得を行わない。
 
-再取得によって正常にデータを取得できた場合は、通常処理へ復帰する。
+取得失敗をログへ記録し、次の取得周期まで待機する。次の取得周期では、通常どおりDHT11からデータ取得を試みる。
 
-再取得しても取得できない場合はセンサー異常として扱い、異常状態をログへ記録する。
-
-具体的な再取得回数および再取得間隔は本設計で決定する。
-
----
+取得失敗によってSensor Process自体を停止させない。
 
 ### 15.6 センサーデータ異常
 
@@ -447,12 +430,12 @@ DHT11から取得したデータがシステムで扱える値として妥当で
 
 基本的には、以下を確認する。
 
-* 温度データが有効であること
-* 湿度データが有効であること
-* データ形式が期待する形式であること
-* システムで定義した範囲を逸脱していないこと
+- 温度データが有効であること
+- 湿度データが有効であること
+- データ形式が期待する形式であること
+- システムで定義した範囲を逸脱していないこと
 
-異常なデータを検出した場合、そのデータをCloudflare Workerへ送信せず、異常として処理する。
+異常なデータを検出した場合、そのデータをCloudflare Workerへ送信せず、破棄して異常を記録する。
 
 ```mermaid
 flowchart TD
@@ -471,9 +454,7 @@ flowchart TD
     Error --> Log
 ```
 
-具体的な温度および湿度の許容範囲については、データ設計および実装設計で決定する。
-
----
+具体的な温度および湿度の許容範囲については、データ設計および実装設計で定義する。
 
 ### 15.7 IPC Message Queue送信異常
 
@@ -481,10 +462,10 @@ Sensor ProcessからIPC Message QueueへのSensorData送信に失敗した場合
 
 以下のような異常を想定する。
 
-* Queueが存在しない
-* Queueへの送信処理が失敗する
-* QueueがFullである
-* IPCリソースにアクセスできない
+- Queueが存在しない
+- Queueへの送信処理が失敗する
+- QueueがFullである
+- IPCリソースにアクセスできない
 
 基本的な処理方針を以下とする。
 
@@ -492,20 +473,20 @@ Sensor ProcessからIPC Message QueueへのSensorData送信に失敗した場合
 flowchart TD
     SensorData["SensorData"]
     Send["IPC Message Queueへ送信"]
-    Result{"送信成功?"}
+    Result{"送信結果"}
     Normal["通常処理継続"]
     Full["Queue Full"]
     Error["IPC異常"]
-    Handle["異常処理"]
+    Handle["異常記録・処理"]
 
     SensorData --> Send
     Send --> Result
 
-    Result -->|Yes| Normal
-    Result -->|No| Full
+    Result -->|成功| Normal
+    Result -->|Queue Full| Full
     Full --> Handle
 
-    Result -->|IPCエラー| Error
+    Result -->|その他のIPCエラー| Error
     Error --> Handle
 ```
 
@@ -513,7 +494,7 @@ IPC Message Queueへの送信失敗時に、Sensor Processを無期限に待機�
 
 Queue Full時は新規SensorDataを破棄し、Errorレベルのログを出力して次回周期処理へ移行する。ローカル保存は行わない。
 
----
+Queueが存在しないなど、Queue Full以外のIPC異常については、異常内容を記録する。Queueの生成・管理はSensor Processが担当し、Communication ProcessはQueueを生成しない。
 
 ### 15.8 IPC Message Queue受信異常
 
@@ -521,62 +502,57 @@ Communication ProcessがIPC Message QueueからSensorDataを受信できない�
 
 ただし、Queueが空であることとIPCそのものが異常であることは区別する。
 
-| 状況              | 扱い        |
-| --------------- | --------- |
-| Queueにデータがない    | 待機状態として正常 |
-| Queueからデータを正常受信 | 通常処理      |
-| Queueへのアクセス失敗   | IPC異常     |
-| Queueが不正状態      | IPC異常     |
+| 状況 | 扱い |
+|---|---|
+| Queueにデータがない | 待機状態として正常 |
+| Queueからデータを正常受信 | 通常処理 |
+| Queueがまだ生成されていない | Queueへの接続を再試行 |
+| Queueへのアクセス失敗 | IPC異常 |
+| Queueが不正状態 | IPC異常 |
 
 Queueが空の場合は、CPUを消費し続けるBusy Loopを避け、待機状態とする。
 
----
+Communication Process起動時にQueueが存在しない場合は、Sensor ProcessによるQueue生成を待ち、既存Queueへの接続を再試行する。
 
 ### 15.9 Queue Full
 
 Sensor ProcessがSensorDataをIPC Message Queueへ送信しようとした際、Queue容量が上限に達している場合はQueue Fullとして扱う。
 
+Queue Fullへの対応は以下とする。
+
+- Queue容量は100件とする。
+- Queue Full時の送信Retryは行わない。
+- 新規SensorDataを破棄する。
+- ローカル保存は行わない。
+- 既存Queueデータは削除・上書きしない。
+- Sensor ProcessをQueue Fullによって待機させない。
+
+Queue Fullは、Communication Processの処理がSensorDataの生成速度に追いついていない場合などに発生する。
+
 ```mermaid
 flowchart TD
     Send["SensorData送信"]
     Full{"Queue Full?"}
-    Wait["一定時間待機"]
-    Retry["再送判断"]
-    Discard["データ破棄"]
-    Store["ローカル保持"]
-    Continue["処理継続"]
+    Continue["通常処理継続"]
+    Discard["新規SensorData破棄"]
+    Log["Queue Fullログ"]
+    Next["次回取得周期"]
 
     Send --> Full
 
     Full -->|No| Continue
-    Full -->|Yes| Wait
-    Wait --> Retry
-
-    Retry -->|再送| Send
-    Retry -->|破棄| Discard
-    Retry -->|保持| Store
-
-    Discard --> Continue
-    Store --> Continue
+    Full -->|Yes| Discard
+    Discard --> Log
+    Log --> Next
 ```
 
-Queue Fullへの対応は以下とする。
-
-* * Queue容量は100件
-* Queue Full時の再送待ちは行わない
-* 新規SensorDataを破棄する
-* ローカル保存は行わない
-* 既存Queueデータは削除しない
-
-具体的な方式については、障害復旧設計で決定する。
-
----
+Queue Full時は新規データを破棄することで、Sensor Processのセンサー取得周期への影響を抑える。
 
 ### 15.10 Wi-Fi接続異常
 
 Wi-Fi接続が失われた場合、Communication Processではネットワーク通信異常として扱う。
 
-Sensor Processは、Communication Processのネットワーク状態とは独立してセンサーデータ取得を継続する。
+Sensor ProcessはCommunication Processのネットワーク状態とは独立してセンサーデータ取得を継続する。
 
 ```mermaid
 flowchart LR
@@ -596,9 +572,7 @@ flowchart LR
 
 通信ができない期間に生成されたSensorDataについては、IPC Message Queueへの蓄積量が増加する可能性がある。
 
-そのため、長時間のネットワーク障害についてはQueue Fullなどの二次的な異常も考慮する。
-
----
+QueueがFullになった場合は、15.9のQueue Full方針に従い、新規SensorDataを破棄する。
 
 ### 15.11 DNS異常
 
@@ -614,7 +588,7 @@ flowchart TD
     Connect["接続処理"]
     Retry["Retry判定"]
     Backoff["Backoff"]
-    Error["通信異常"]
+    Discard["Retry上限到達・対象データ破棄"]
 
     Request --> DNS
     DNS --> Result
@@ -623,12 +597,12 @@ flowchart TD
     Result -->|No| Retry
 
     Retry -->|Retry可能| Backoff
-    Retry -->|Retry不可| Error
+    Retry -->|上限到達| Discard
 
     Backoff --> DNS
 ```
 
----
+Retry回数およびBackoffは14.6で定義した通信Retry方針に従う。
 
 ### 15.12 HTTP接続異常
 
@@ -636,14 +610,14 @@ Cloudflare Workerへの接続に失敗した場合、Communication Processは接
 
 接続異常については、以下を想定する。
 
-* TCP接続失敗
-* TLS接続失敗
-* 接続Timeout
-* ネットワーク切断
+- TCP接続失敗
+- TLS接続失敗
+- 接続Timeout
+- ネットワーク切断
 
 一時的な接続異常についてはRetryおよびBackoffによる復旧を試みる。
 
----
+Retry上限に到達した場合は、対象SensorDataを破棄して次のデータ処理へ移行する。
 
 ### 15.13 HTTP Timeout
 
@@ -657,6 +631,7 @@ flowchart TD
     Success["通信成功"]
     Retry["Retry判定"]
     Backoff["Backoff"]
+    Discard["Retry上限到達・対象データ破棄"]
 
     Send --> Wait
     Wait --> Timeout
@@ -664,23 +639,21 @@ flowchart TD
     Timeout -->|No| Success
     Timeout -->|Yes| Retry
 
-    Retry --> Backoff
+    Retry -->|Retry可能| Backoff
+    Retry -->|上限到達| Discard
+
     Backoff --> Send
 ```
 
-Timeout時間は、通信設計で定義した値を使用する。
+Timeout時間は通信設計で定義した値を使用する。
 
 Timeout発生時には、RequestがCloudflare Workerへ到達している可能性も考慮する。
 
-そのため、Retryによって同一データが重複して保存される可能性がある。
-
-重複データへの対応については、通信設計およびデータ設計で検討する。
-
----
+そのため、Retryによって同一データが重複して保存される可能性がある。重複データへの対応については、データ設計および通信設計で定義した複合キー方式に従う。
 
 ### 15.14 HTTP 4xx
 
-Cloudflare WorkerからHTTP 4xxが返された場合、原則としてClient側のRequestに問題があるものとして扱う。
+Cloudflare WorkerからHTTP 4xxが返された場合、Request内容、認証情報または送信データなど、Client側のRequestに問題があるものとして扱う。
 
 基本方針は以下とする。
 
@@ -691,16 +664,14 @@ Retryしない
     ↓
 異常記録
     ↓
-対象データの扱いを決定
+対象SensorDataを破棄
     ↓
 次のSensorData処理へ
 ```
 
 HTTP 4xxを受信した場合、同一Requestを無条件にRetryし続けない。
 
-ただし、特定のHTTPステータスコードについてRetryが適切であると判断した場合は、通信設計を見直す。
-
----
+対象データを破棄した後、Communication Processは次のSensorData処理へ移行する。
 
 ### 15.15 HTTP 5xx
 
@@ -717,7 +688,7 @@ flowchart TD
     Success["成功"]
     Retry["Retry"]
     Backoff["Backoff"]
-    Error["Retry終了"]
+    Discard["Retry上限到達・対象データ破棄"]
 
     Request --> Response
     Response --> Check
@@ -728,12 +699,12 @@ flowchart TD
     Retry --> Backoff
     Backoff --> Request
 
-    Retry -->|上限到達| Error
+    Retry -->|上限到達| Discard
 ```
 
-Retry回数およびBackoff方式は、通信設計および障害復旧設計で決定する。
+Retry回数およびBackoff方式は14.6に従う。
 
----
+Retry上限に到達した場合は対象SensorDataを破棄し、次のデータ処理へ移行する。
 
 ### 15.16 Cloudflare Worker異常
 
@@ -743,15 +714,13 @@ Edge Applicationから見た場合、Cloudflare Worker内部の異常原因を�
 
 そのため、Edge Applicationでは主に以下の情報を利用して異常を判定する。
 
-* HTTP Status Code
-* Response Timeout
-* Connection Error
-* Response内容
-* DNS Error
+- HTTP Status Code
+- Response Timeout
+- Connection Error
+- Response内容
+- DNS Error
 
 Cloudflare Worker内部の詳細な障害原因については、Cloudflare側の監視およびログによって確認する。
-
----
 
 ### 15.17 Process異常終了
 
@@ -773,13 +742,15 @@ flowchart TD
     Init --> Normal
 ```
 
-Process異常終了の検出および再起動にはsystemdを使用する。異常終了時は`Restart=on-failure`、再起動待ち時間は5秒とする。
+Process異常終了の検出および再起動にはsystemdを使用する。
 
----
+Service設定では`Restart=on-failure`、再起動待ち時間は`RestartSec=5`とする。
+
+systemdの再起動対象となる終了条件は、Service設定に従う。
 
 ### 15.18 Raspberry Pi再起動
 
-Raspberry Piが再起動した場合、Edge ApplicationはLinux起動後に必要なProcessを再起動し、通常動作へ復帰する。
+Raspberry Piが再起動した場合、Linux起動後に必要なProcessを再起動し、通常動作へ復帰する。
 
 ```mermaid
 flowchart TD
@@ -803,9 +774,9 @@ flowchart TD
     Init --> Normal
 ```
 
-再起動前にIPC Message Queueに存在していたデータの扱いについては、障害復旧設計で定義する。
+再起動前にIPC Message Queueに存在していたデータは永続化されない。再起動後に過去の未送信データを復元・再送する処理は行わない。
 
----
+QueueはSensor Processによって生成され、Communication Processは生成済みのQueueへ接続する。
 
 ### 15.19 電源断
 
@@ -813,15 +784,13 @@ Raspberry Piの電源が突然失われた場合、Edge Applicationによる正�
 
 そのため、電源断については以下の影響を考慮する。
 
-* 未送信SensorDataの消失
-* IPC Message Queue上のデータ消失
-* Process状態の消失
-* ファイルへ保存中のデータへの影響
-* 次回起動時の復旧
+- 未送信SensorDataの消失
+- IPC Message Queue上のデータ消失
+- Process状態の消失
+- 次回起動時のQueue再生成
+- 次回起動時のProcess初期化
 
-電源断からの復旧については、障害復旧設計で定義する。
-
----
+IPC Message Queueは揮発性の一時バッファであり、電源断後にデータを復元する機能は持たない。
 
 ### 15.20 異常ログ
 
@@ -829,46 +798,40 @@ Raspberry Piの電源が突然失われた場合、Edge Applicationによる正�
 
 基本的に以下の情報を記録する。
 
-| 項目      | 内容               |
-| ------- | ---------------- |
-| 発生時刻    | 異常を検出した時刻        |
-| Process | 異常を検出したProcess   |
-| 異常種別    | センサー、IPC、通信などの分類 |
-| エラー内容   | 発生した異常の内容        |
-| 状態      | 異常発生時の状態         |
-| Retry回数 | Retryを実行した場合の回数  |
-| 復旧結果    | 復旧成功 / 失敗        |
-| 関連情報    | 必要に応じた追加情報       |
+| 項目 | 内容 |
+|---|---|
+| 発生時刻 | 異常を検出した時刻 |
+| Process | 異常を検出したProcess |
+| 異常種別 | センサー、IPC、通信などの分類 |
+| エラー内容 | 発生した異常の内容 |
+| 状態 | 異常発生時の状態 |
+| Retry回数 | Retryを実行した場合の回数 |
+| 復旧結果 | 復旧成功 / 失敗 |
+| 関連情報 | 必要に応じた追加情報 |
 
 秘密情報や認証情報など、セキュリティ上記録すべきでない情報はログへ出力しない。
-
-詳細なログ項目および出力方式については、ログ・監視設計で定義する。
-
----
 
 ### 15.21 異常処理一覧
 
 本章で定義した主な異常処理を以下にまとめる。
 
-| 異常              | 検出担当                  | 基本処理            | 復旧方針         |
-| --------------- | --------------------- | --------------- | ------------ |
-| DHT11取得失敗       | Sensor Process        | 再取得             | 再取得成功後に継続    |
-| センサーデータ異常       | Sensor Process        | データ破棄・記録        | 次回取得         |
-| IPC送信失敗         | Sensor Process        | 異常処理            | 復旧方法を別途定義    |
-| IPC受信異常         | Communication Process | 異常処理            | 復旧方法を別途定義    |
-| Queue Full      | Sensor Process        | Queue状態を確認      | 再送・破棄・保持を検討  |
-| Wi-Fi異常         | Communication Process | 通信Retry         | ネットワーク復旧後に継続 |
-| DNS異常           | Communication Process | Retry / Backoff | 名前解決復旧後に継続   |
-| 接続失敗            | Communication Process | Retry / Backoff | 接続復旧後に継続     |
-| Timeout         | Communication Process | Retry / Backoff | 通信復旧後に継続     |
-| HTTP 4xx        | Communication Process | 原則Retryしない      | 異常記録         |
-| HTTP 5xx        | Communication Process | Retry / Backoff | サーバー復旧後に継続   |
-| Worker異常        | Communication Process | 通信結果に応じて処理      | Retry等       |
-| Process異常終了     | systemd等              | Process再起動      | 初期化後に復帰      |
-| Raspberry Pi再起動 | systemd / OS          | Process再起動      | 通常動作へ復帰      |
-| 電源断             | OS / Hardware         | 次回起動時に復旧        | 障害復旧設計で定義    |
-
----
+| 異常 | 検出担当 | 基本処理 | 復旧方針 |
+|---|---|---|---|
+| DHT11取得失敗 | Sensor Process | 取得失敗を記録 | 次回取得周期で再取得 |
+| センサーデータ異常 | Sensor Process | データ破棄・記録 | 次回取得 |
+| IPC送信失敗 | Sensor Process | 異常処理 | Queue状態・IPC異常を確認 |
+| IPC受信異常 | Communication Process | 異常処理 | Queueへの再接続 |
+| Queue Full | Sensor Process | 新規データ破棄 | 次回取得周期へ移行 |
+| Wi-Fi異常 | Communication Process | 通信Retry | ネットワーク復旧後に継続 |
+| DNS異常 | Communication Process | Retry / Backoff | 名前解決復旧後に継続 |
+| 接続失敗 | Communication Process | Retry / Backoff | 接続復旧後に継続 |
+| Timeout | Communication Process | Retry / Backoff | Retry上限到達時に対象データ破棄 |
+| HTTP 4xx | Communication Process | Retryせず対象データ破棄 | 次のデータ処理へ |
+| HTTP 5xx | Communication Process | Retry / Backoff | Retry上限到達時に対象データ破棄 |
+| Worker異常 | Communication Process | 通信結果に応じて処理 | Retry等 |
+| Process異常終了 | systemd等 | Process再起動 | 初期化後に復帰 |
+| Raspberry Pi再起動 | systemd / OS | Process再起動・Queue再生成 | 通常動作へ復帰 |
+| 電源断 | OS / Hardware | 次回起動時に初期化 | 未送信データは復元しない |
 
 ### 15.22 異常処理における基本原則
 
@@ -892,11 +855,13 @@ Raspberry Piの電源が突然失われた場合、Edge Applicationによる正�
 
 Retry回数、Retry間隔および終了条件を定義する。
 
-#### 15.22.4 データ消失の扱い
+#### 15.22.4 データ損失の扱い
 
-通信障害やQueue FullなどによってSensorDataを送信できない場合、データをどこまで保持するかを明確にする。
+本システムではSensorDataの永続化を行わない。
 
-保持方法およびデータ消失の許容範囲については、障害復旧設計で定義する。
+Queue Full、通信Retry上限到達、HTTP 4xxおよびShutdownなどによって送信できなかったSensorDataは破棄する。
+
+すべてのSensorDataを必ずCloudflare Workerへ送信できることは保証しない。
 
 #### 15.22.5 異常状態の記録
 
@@ -914,15 +879,13 @@ Retry回数、Retry間隔および終了条件を定義する。
 
 本章では、それらの異常に対して、
 
-* どのように復旧を試みるか
-* どの範囲まで復旧するか
-* 復旧できない場合にどうするか
-* データをどこまで保持するか
-* Processをどのように復旧するか
+- どのように復旧を試みるか
+- どの範囲まで復旧するか
+- 復旧できない場合にどうするか
+- データをどこまで保持するか
+- Processをどのように復旧するか
 
 を定義する。
-
----
 
 ### 16.2 障害復旧の基本方針
 
@@ -961,60 +924,48 @@ flowchart LR
 6. 復旧処理によるシステムへの影響を最小化する。
 7. 障害および復旧結果をログへ記録する。
 
----
-
 ### 16.3 障害レベル
 
 障害の影響範囲に応じて、以下のように復旧レベルを考える。
 
-| レベル     | 対象           | 基本的な復旧方法        |
-| ------- | ------------ | --------------- |
-| Level 1 | 処理単位の一時異常    | Retry / 再実行     |
-| Level 2 | 通信・IPC等の継続異常 | 再初期化 / 再接続      |
-| Level 3 | Process異常    | Process再起動      |
-| Level 4 | システム異常       | Raspberry Pi再起動 |
-| Level 5 | 電源断          | 次回起動時の復旧        |
+| レベル | 対象 | 基本的な復旧方法 |
+|---|---|---|
+| Level 1 | 処理単位の一時異常 | Retry / 再実行 |
+| Level 2 | 通信・IPC等の継続異常 | 再初期化 / 再接続 |
+| Level 3 | Process異常 | Process再起動 |
+| Level 4 | システム異常 | Raspberry Pi再起動 |
+| Level 5 | 電源断 | 次回起動時の復旧 |
 
 可能な限り低いレベルで復旧させる。
 
 例えば、HTTP通信の一時的なTimeoutであれば、Raspberry Pi全体を再起動するのではなく、Communication Process内でRetryを行う。
 
----
-
 ### 16.4 DHT11取得失敗からの復旧
 
-DHT11のデータ取得に失敗した場合、Sensor Processは再取得を行う。
+DHT11のデータ取得に失敗した場合、Sensor Processはその取得周期内で再取得を行わない。
 
 ```mermaid
 flowchart TD
     Read["DHT11取得"]
     Success{"取得成功?"}
-    Retry["再取得"]
-    RetryLimit{"Retry上限?"}
-    SensorError["センサー異常"]
+    Error["取得失敗を記録"]
+    Wait["次回取得周期まで待機"]
+    Next["次回取得"]
     Continue["通常処理継続"]
 
     Read --> Success
 
     Success -->|Yes| Continue
-    Success -->|No| RetryLimit
-
-    RetryLimit -->|未到達| Retry
-    Retry --> Read
-
-    RetryLimit -->|到達| SensorError
-    SensorError --> Continue
+    Success -->|No| Error
+    Error --> Wait
+    Wait --> Next
 ```
 
-一時的な取得失敗であれば、Retryによって正常取得へ復帰する。
+取得失敗したデータは生成せず、IPC Message Queueへ送信しない。
 
-一定回数Retryしても取得できない場合は、継続的なセンサー異常として記録する。
+取得失敗をログへ記録した後、Sensor Processは次の取得周期で再度取得を試みる。
 
-ただし、Sensor Process自体は不要に停止させず、次回の取得周期で再度取得を試みる方式を基本とする。
-
-Retry回数は最大3回、Retry間隔は1秒→2秒→4秒とする。
-
----
+センサー取得失敗によってProcess全体を停止させない。
 
 ### 16.5 センサーデータ異常からの復旧
 
@@ -1043,54 +994,49 @@ flowchart TD
 
 不正データをCloudflare Workerへ送信しないことを基本とする。
 
----
-
 ### 16.6 IPC Message Queue障害からの復旧
 
 IPC Message Queueに異常が発生した場合、Sensor ProcessおよびCommunication Processの両方に影響する可能性がある。
 
 そのため、IPC異常発生時には以下を考慮する。
 
-* Queueの存在確認
-* Queueへのアクセス状態確認
-* Queueの再初期化
-* Process再起動
-* Queue上に存在していたデータの扱い
+- Queueの存在確認
+- Queueへのアクセス状態確認
+- Queueへの再接続
+- Process再起動
+- Queue上に存在していたデータの扱い
 
-IPCの一時的なアクセス異常については、可能な範囲で再初期化を試みる。
+IPC Message Queueの生成・管理はSensor Processが担当する。
 
-再初期化によって復旧できない場合は、systemdによるProcess再起動で復旧する。
+Communication ProcessはQueueを新規生成せず、既存Queueへの接続を行う。
 
----
+Communication Processの起動時にQueueが存在しない場合は、Queueが生成されるまで接続を再試行する。
+
+Queueが再生成された場合、以前のQueueに存在していたデータは復元されない。
 
 ### 16.7 Queue Fullからの復旧
 
 通信処理がセンサーデータの生成速度に追いつかない場合、IPC Message Queueにデータが蓄積し、最終的にQueue Fullが発生する可能性がある。
 
+Queue Full発生時にはSensor Processを無期限に停止させない。
+
+新規SensorDataを破棄してErrorログを出力し、次回取得周期へ移行する。ローカル永続化は行わない。
+
 ```mermaid
 flowchart TD
     Queue["IPC Message Queue"]
     Full["Queue Full"]
-    Wait["Communication Processの処理待ち"]
-    Retry["再送判断"]
-    Discard["データ破棄"]
-    Store["ローカル保存"]
-    Resume["Queueへの送信再開"]
+    Discard["新規SensorData破棄"]
+    Log["Queue Fullログ"]
+    Resume["次回取得周期へ移行"]
 
     Queue --> Full
-    Full --> Wait
-    Wait --> Retry
-
-    Retry -->|再送| Resume
-    Retry -->|破棄| Discard
-    Retry -->|保存| Store
-
-    Resume --> Queue
+    Full --> Discard
+    Discard --> Log
+    Log --> Resume
 ```
 
-Queue Full発生時には、Sensor Processを無期限に停止させない。新規SensorDataを破棄してErrorログを出力し、次回周期処理へ移行する。ローカル永続化は行わない。
-
----
+Queue内にすでに存在するデータは削除・上書きしない。
 
 ### 16.8 Wi-Fi障害からの復旧
 
@@ -1107,6 +1053,7 @@ flowchart TD
     Check["通信可能確認"]
     Resume["通信再開"]
     Continue["通常通信"]
+    Discard["Retry上限到達・対象データ破棄"]
 
     Normal --> Detect
     Detect --> Retry
@@ -1116,7 +1063,8 @@ flowchart TD
     Check -->|復旧| Resume
     Resume --> Continue
 
-    Check -->|未復旧| Retry
+    Check -->|未復旧・Retry可能| Retry
+    Retry -->|Retry上限到達| Discard
 ```
 
 Wi-Fi障害によってSensor Processを停止させない。
@@ -1124,8 +1072,6 @@ Wi-Fi障害によってSensor Processを停止させない。
 Communication Processが復旧するまで、Sensor Processはセンサー取得を継続する。
 
 ただし、通信障害が長時間継続した場合はIPC Message Queueの蓄積量が増加するため、Queue Full対策が必要となる。
-
----
 
 ### 16.9 DNS障害からの復旧
 
@@ -1138,21 +1084,19 @@ flowchart TD
     Retry["Retry"]
     Backoff["Backoff"]
     Continue["HTTP通信継続"]
-    Error["継続障害"]
+    Discard["Retry上限到達・対象データ破棄"]
 
     DNS --> Success
 
     Success -->|Yes| Continue
     Success -->|No| Retry
 
-    Retry --> Backoff
+    Retry -->|Retry可能| Backoff
+    Retry -->|上限到達| Discard
     Backoff --> DNS
-    Retry -.->|長時間復旧しない| Error
 ```
 
-無限Retryとならないよう、Retryの上限または長時間障害時の扱いを定義する。
-
----
+Retry回数およびBackoffは14.6で定義した通信Retry方針に従う。
 
 ### 16.10 HTTP通信障害からの復旧
 
@@ -1160,12 +1104,14 @@ HTTP通信に失敗した場合は、Communication Process内でRetryを行う�
 
 対象となる主な障害は以下とする。
 
-* 接続失敗
-* TLS接続失敗
-* DNS失敗
-* Timeout
-* HTTP 5xx
-* ネットワーク切断
+- 接続失敗
+- TLS接続失敗
+- DNS失敗
+- Timeout
+- HTTP 5xx
+- ネットワーク切断
+
+HTTP 4xxはRetry対象としない。
 
 基本的な復旧フローを以下に示す。
 
@@ -1177,32 +1123,33 @@ flowchart TD
     Retryable["Retry可能"]
     Retry["Retry"]
     Backoff["Backoff"]
-    End["Retry終了"]
-    DataHandle["未送信データ処理"]
+    Discard["対象データ破棄"]
+    Next["次のデータ処理"]
 
     Request --> Result
 
     Result -->|2xx| Success
     Result -->|Timeout / 接続失敗 / 5xx| Retryable
-    Result -->|4xx| End
+    Result -->|4xx| Discard
 
     Retryable --> Retry
     Retry --> Backoff
     Backoff --> Request
 
-    Retry -->|上限到達| End
-    End --> DataHandle
+    Retry -->|上限到達| Discard
+    Success --> Next
+    Discard --> Next
 ```
 
-Retry回数、Backoff時間およびRetry終了後のデータ処理は、通信量、Queue容量およびデータ保持要件を考慮して決定する。
+Retry回数は初回送信に加えて最大3回とし、Backoff時間は1秒、2秒、4秒とする。
 
----
+Retry上限到達後は対象SensorDataを破棄して次のデータ処理へ移行する。
 
 ### 16.11 HTTP 4xxからの復旧
 
 HTTP 4xxは、Request内容や認証などのClient側要因によって発生する可能性がある。
 
-そのため、原則として同一Requestを無条件にRetryしない。
+そのため、同一Requestを無条件にRetryしない。
 
 ```text
 HTTP 4xx
@@ -1211,14 +1158,12 @@ HTTP 4xx
     ↓
 Retryしない
     ↓
-対象SensorDataの扱いを決定
+対象SensorDataを破棄
     ↓
 次のデータ処理
 ```
 
-ただし、ステータスコードによっては再試行が適切な場合があるため、実装時にはHTTP仕様およびWorker側仕様を確認する。
-
----
+HTTP 4xxを受信した場合は対象データを破棄し、Communication Processは次のデータ処理へ移行する。
 
 ### 16.12 HTTP 5xxからの復旧
 
@@ -1232,19 +1177,20 @@ flowchart LR
     Error["HTTP 5xx"]
     Retry["Retry"]
     Backoff["Backoff"]
-    Worker
+    Discard["Retry上限到達・対象データ破棄"]
+    Next["次のデータ処理"]
 
     Worker --> Error
     Error --> Retry
     Retry --> Backoff
     Backoff --> Worker
+    Retry -->|上限到達| Discard
+    Discard --> Next
 ```
 
-Retryを無期限に繰り返さず、一定の条件でRetryを終了する。
+Retryを無期限に繰り返さず、最大3回でRetryを終了する。
 
-Retry終了後に対象SensorDataをどのように扱うかは、データ保持方針と合わせて決定する。
-
----
+Retry終了後は対象SensorDataを破棄する。
 
 ### 16.13 Timeoutからの復旧
 
@@ -1266,13 +1212,11 @@ D1
 
 Worker側ではRequestを受信して処理が完了しているにもかかわらず、Pi側ではResponseを受信できない可能性がある。
 
-その場合、Retryによって同じSensorDataが複数回保存される可能性がある。
+その場合、Retryによって同じSensorDataが複数回送信される可能性がある。
 
 したがって、障害復旧設計では「Retryすること」と「重複データをどう扱うか」を分けて考える。
 
-重複データへの対応については、データ設計および通信設計で具体化する。
-
----
+重複データへの対応については、データ設計および通信設計で定義した複合キー方式に従う。
 
 ### 16.14 通信障害中のSensor Process
 
@@ -1299,9 +1243,7 @@ flowchart LR
 
 一方で、通信障害が長時間継続した場合にはQueueがFullになる可能性がある。
 
-そのため、通信障害復旧とQueue Full対策は関連付けて設計する。
-
----
+Queue Full時は新規SensorDataを破棄する。
 
 ### 16.15 Process異常終了からの復旧
 
@@ -1325,29 +1267,29 @@ flowchart TD
     Ready --> Run
 ```
 
+Service設定では`Restart=on-failure`、再起動待ち時間は`RestartSec=5`とする。
+
 再起動時には、以下を再初期化する。
 
-* Process内部状態
-* Sensor関連リソース
-* IPC関連リソース
-* 通信関連リソース
-* 必要な設定情報
+- Process内部状態
+- Sensor関連リソース
+- IPC関連リソース
+- 通信関連リソース
+- 必要な設定情報
 
 再起動後に正常動作へ移行できたことを確認する。
-
----
 
 ### 16.16 Sensor Process異常時の復旧
 
 Sensor Processが異常終了した場合、Communication Processは独立して動作できる構造とする。
 
-Sensor Process再起動後は、IPC Message Queueを再利用または再初期化し、センサー取得を再開する。
+Sensor Process再起動後は、Sensor ProcessがIPC Message Queueを生成・管理する。
 
-ただし、Sensor Process異常終了によって取得できなかった期間のSensorDataを後から補完することは基本的にはできない。
+Communication Processは既存Queueへの接続を行い、Queueが利用可能になるまで接続を再試行する。
 
-したがって、Sensor Process停止中のデータについては、データ欠損として扱う可能性がある。
+Sensor Process異常終了によって取得できなかった期間のSensorDataを後から補完することはできない。
 
----
+Sensor Process停止中のデータについては、データ欠損として扱う。
 
 ### 16.17 Communication Process異常時の復旧
 
@@ -1369,11 +1311,11 @@ flowchart LR
     Restart --> Queue
 ```
 
-Communication Processが再起動した後、Queueに残っているSensorDataを処理することで、通信処理を再開する。
+Communication Processが再起動した後、既存Queueに残っているSensorDataを処理することで、通信処理を再開する。
 
-ただし、Queue容量を超えた場合のデータ損失については、Queue Fullの復旧方針に従う。
+ただし、Queue容量を超えた場合は新規SensorDataが破棄される。
 
----
+Queueは揮発性であるため、Communication Processの異常終了時にQueue自体が失われた場合、以前のデータは復元できない。
 
 ### 16.18 Raspberry Pi再起動からの復旧
 
@@ -1388,7 +1330,7 @@ flowchart TD
     Systemd["systemd"]
     Sensor["Sensor Process起動"]
     Comm["Communication Process起動"]
-    IPC["IPC初期化"]
+    Queue["Sensor ProcessによるQueue生成"]
     Init["各Process初期化"]
     Normal["通常動作"]
 
@@ -1398,16 +1340,18 @@ flowchart TD
     Systemd --> Sensor
     Systemd --> Comm
 
-    Sensor --> Init
-    Comm --> Init
+    Sensor --> Queue
+    Comm --> Queue
 
-    Init --> IPC
-    IPC --> Normal
+    Queue --> Init
+    Init --> Normal
 ```
 
-Process起動順序およびIPC初期化順序については、Lifecycle設計およびsystemd設計で具体化する。
+Sensor ProcessがIPC Message Queueを生成し、Communication Processは生成済みQueueへ接続する。
 
----
+Process起動順序およびQueueへの接続条件については、Lifecycle設計およびsystemd設計で具体化する。
+
+再起動前のQueueデータは復元しない。
 
 ### 16.19 電源断からの復旧
 
@@ -1417,22 +1361,25 @@ Process起動順序およびIPC初期化順序については、Lifecycle設計�
 
 考慮する項目は以下とする。
 
-* IPC Message Queueの状態
-* 未送信SensorData
-* ローカル保存データ
-* Process状態
-* ログファイル
-* ファイルシステムへの書き込み状態
+- IPC Message Queueの状態
+- 未送信SensorData
+- Process状態
+- ログファイル
+- ファイルシステムへの書き込み状態
 
-電源断によるデータ損失をどこまで許容するかは、データ保持要件によって決定する。
+IPC Message Queueは揮発性であり、電源断によってQueue内のデータは失われる。
 
----
+次回起動時はSensor ProcessがQueueを生成し、Communication ProcessがそのQueueへ接続する。
+
+過去の未送信データを復元・再送する処理は行わない。
 
 ### 16.20 未送信SensorDataの復旧
 
 本システムでは未送信SensorDataを永続化しないため、Process再起動やRaspberry Pi再起動後に過去の未送信データを復旧送信する処理は行わない。
 
-Communication ProcessがRetry中に保持していたSensorDataも、Shutdown時には破棄する。
+Communication ProcessがRetry中に保持していたSensorDataも、Retry上限到達時またはShutdown時には破棄する。
+
+Queueに残っている未送信SensorDataについても、Shutdown完了時に破棄する。
 
 再起動後は新たに取得したSensorDataから送信を再開する。
 
@@ -1440,31 +1387,37 @@ Communication ProcessがRetry中に保持していたSensorDataも、Shutdown時
 
 障害発生時には、すべてのSensorDataを必ず保持できるとは限らない。
 
-そのため、以下の3つを区別する。
+本システムでは、以下の方針とする。
 
-```text
-データ保持
-    ↓
-障害発生中も保持する
+| 状況 | データの扱い |
+|---|---|
+| Queueに正常に格納されたデータ | Communication Processによる送信対象 |
+| Queue Full | 新規SensorDataを破棄 |
+| HTTP 4xx | 対象SensorDataを破棄 |
+| 通信Retry上限到達 | 対象SensorDataを破棄 |
+| Process再起動 | Queueが残っている場合は残存データを処理 |
+| Raspberry Pi再起動・電源断 | Queueデータは消失 |
+| Shutdown | 未送信データを破棄 |
 
-データ再送
-    ↓
-障害復旧後に送信する
-
-データ損失
-    ↓
-復旧できず破棄される
-```
-
-本システムでは、データ保持を強化すると構成が複雑になるため、必要な信頼性とのバランスを考慮して方式を決定する。
-
----
+本システムのIPC Message Queueは一時的な揮発性バッファであり、永続化および再起動後のデータ復元は行わない。
 
 ### 16.22 Retry / Backoff設計
 
 通信障害時はCommunication Processが最大3回Retryする。
 
 Retry間隔は1秒、2秒、4秒とし、Exponential Backoffを使用する。最大Backoff時間は4秒とする。
+
+Retryは初回送信に加えて最大3回とする。
+
+Retry対象は以下とする。
+
+- DNS失敗
+- TCP接続失敗
+- TLS接続失敗
+- Timeout
+- HTTP 5xx
+
+HTTP 4xxはRetry対象としない。
 
 Retry上限到達後は対象SensorDataを破棄し、次のデータ処理へ移行する。
 
@@ -1474,17 +1427,15 @@ Retry上限到達後は対象SensorDataを破棄し、次のデータ処理へ�
 
 例えば以下の状態を想定する。
 
-* Sensor Processが繰り返し異常終了する
-* Communication Processが繰り返し異常終了する
-* 長時間ネットワークが復旧しない
-* IPCが正常に初期化できない
-* ファイルシステムへ正常にアクセスできない
+- Sensor Processが繰り返し異常終了する
+- Communication Processが繰り返し異常終了する
+- 長時間ネットワークが復旧しない
+- IPCが正常に初期化できない
+- ファイルシステムへ正常にアクセスできない
 
-この場合は、ログへ異常状態を記録し、上位の復旧機構へ処理を移行する。
+Process異常についてはsystemdによる再起動を使用する。Service設定では`Restart=on-failure`、再起動待ち時間は`RestartSec=5`とする。
 
-Process異常についてはsystemdによる再起動、システム全体の異常については必要に応じてRaspberry Piの再起動などを復旧手段とする。
-
----
+システム全体の異常については、必要に応じてRaspberry Piの再起動などを復旧手段とする。
 
 ### 16.24 復旧後の確認
 
@@ -1499,7 +1450,7 @@ flowchart TD
     Success{"正常?"}
     Normal["通常動作"]
     Continue["追加復旧"]
-    
+
     Recovery --> Check
     Check --> Success
 
@@ -1508,66 +1459,66 @@ flowchart TD
     Continue --> Recovery
 ```
 
----
-
 ### 16.25 復旧処理の記録
 
 障害復旧を実施した場合は、以下の情報をログへ記録する。
 
-| 項目      | 内容                      |
-| ------- | ----------------------- |
-| 障害発生時刻  | 障害を検出した時刻               |
-| 障害種別    | 発生した障害                  |
-| 復旧開始時刻  | 復旧処理を開始した時刻             |
-| 復旧方法    | Retry、再初期化、Process再起動など |
-| Retry回数 | Retryした回数               |
-| 復旧完了時刻  | 正常状態へ戻った時刻              |
-| 復旧結果    | 成功 / 失敗                 |
-| データ損失   | データ損失の有無                |
-| 備考      | 必要な追加情報                 |
+| 項目 | 内容 |
+|---|---|
+| 障害発生時刻 | 障害を検出した時刻 |
+| 障害種別 | 発生した障害 |
+| 復旧開始時刻 | 復旧処理を開始した時刻 |
+| 復旧方法 | Retry、再初期化、Process再起動など |
+| Retry回数 | Retryした回数 |
+| 復旧完了時刻 | 正常状態へ戻った時刻 |
+| 復旧結果 | 成功 / 失敗 |
+| データ損失 | データ損失の有無 |
+| 備考 | 必要な追加情報 |
 
 これにより、障害発生から復旧までの経緯を確認できるようにする。
 
----
-
 ### 16.26 障害復旧方式一覧
 
-| 障害                        | 復旧方法            | 上位復旧       |
-| ------------------------- | --------------- | ---------- |
-| DHT11取得失敗                 | Retry           | 継続取得       |
-| 不正SensorData              | データ破棄・次回取得      | センサー異常記録   |
-| IPC送信失敗                   | 再送・再初期化         | Process復旧  |
-| IPC受信失敗                   | 再初期化            | Process再起動 |
-| Queue Full                | 待機・再送・保持・破棄     | データ保持方式    |
-| Wi-Fi障害                   | Retry / Backoff | 継続Retry    |
-| DNS障害                     | Retry / Backoff | 継続Retry    |
-| 接続失敗                      | Retry / Backoff | 継続Retry    |
-| HTTP Timeout              | Retry / Backoff | データ保持処理    |
-| HTTP 4xx                  | 原則Retryしない      | 異常記録       |
-| HTTP 5xx                  | Retry / Backoff | データ保持処理    |
-| Sensor Process異常終了        | Process再起動      | 必要に応じ上位復旧  |
-| Communication Process異常終了 | Process再起動      | 必要に応じ上位復旧  |
-| Raspberry Pi再起動           | Process再起動      | 通常動作復帰     |
-| 電源断                       | 次回起動時復旧         | データ損失確認    |
-
----
+| 障害 | 復旧方法 | 上位復旧 |
+|---|---|---|
+| DHT11取得失敗 | 次回取得周期で再取得 | 継続取得 |
+| 不正SensorData | データ破棄・次回取得 | センサー異常記録 |
+| IPC送信失敗 | Queue状態確認 | Process復旧 |
+| IPC受信失敗 | Queueへの再接続 | Process再起動 |
+| Queue Full | 新規データ破棄 | 次回取得周期へ移行 |
+| Wi-Fi障害 | Retry / Backoff | Retry上限到達後に対象データ破棄 |
+| DNS障害 | Retry / Backoff | Retry上限到達後に対象データ破棄 |
+| 接続失敗 | Retry / Backoff | Retry上限到達後に対象データ破棄 |
+| HTTP Timeout | Retry / Backoff | Retry上限到達後に対象データ破棄 |
+| HTTP 4xx | Retryしない | 対象データ破棄 |
+| HTTP 5xx | Retry / Backoff | Retry上限到達後に対象データ破棄 |
+| Sensor Process異常終了 | Process再起動 | 必要に応じ上位復旧 |
+| Communication Process異常終了 | Process再起動 | 必要に応じ上位復旧 |
+| Raspberry Pi再起動 | Process再起動・Queue再生成 | 通常動作復帰 |
+| 電源断 | 次回起動時復旧 | 未送信データは復元しない |
 
 ### 16.27 本章で決定した基本方針
 
 本システムの障害復旧について、以下を基本方針とする。
 
 1. 可能な限り障害が発生したProcess内で復旧する。
-2. 一時的な障害にはRetryおよびBackoffを使用する。
-3. 無限Retryは行わない。
-4. Communication Processの通信障害によってSensor Processを停止させない。
-5. Queue Fullについてはデータ保持方針と合わせて処理する。
-6. Process異常終了時はsystemdによってProcessを再起動する。
-7. Raspberry Pi再起動後はsystemd等によってProcessを起動する。
-8. 電源断を想定し、次回起動時にシステムが復旧できる構造とする。
-9. 復旧後は正常状態へ戻ったことを確認する。
-10. 障害および復旧結果をログへ記録する。
+2. 一時的な通信障害にはRetryおよびBackoffを使用する。
+3. 通信Retryは初回送信に加えて最大3回とする。
+4. Retry間隔は1秒、2秒、4秒とする。
+5. HTTP 4xxはRetryせず、対象SensorDataを破棄する。
+6. DHT11取得失敗時は同一取得周期内で再取得しない。
+7. Communication Processの通信障害によってSensor Processを停止させない。
+8. Queue Full時は新規SensorDataを破棄する。
+9. Queueは揮発性の一時バッファとし、永続化しない。
+10. Process異常終了時はsystemdによってProcessを再起動する。
+11. Raspberry Pi再起動後はSensor ProcessがQueueを生成し、Communication Processが接続する。
+12. Shutdown時の未送信データは破棄する。
+13. 復旧後は正常状態へ戻ったことを確認する。
+14. 障害および復旧結果をログへ記録する。
 
 ---
+
+## 17. ログ・監視設計
 
 ### 17.1 目的
 
@@ -1575,17 +1526,15 @@ flowchart TD
 
 ログは、以下を目的として使用する。
 
-* システムの動作確認
-* 異常発生の確認
-* 異常原因の調査
-* 障害復旧状況の確認
-* Processの状態確認
-* 通信状態の確認
-* センサーデータ取得状態の確認
+- システムの動作確認
+- 異常発生の確認
+- 異常原因の調査
+- 障害復旧状況の確認
+- Processの状態確認
+- 通信状態の確認
+- センサーデータ取得状態の確認
 
 本章ではログに記録すべき情報と出力方針を定義する。ログ出力はsystemd journalを使用し、保持期間は7日とする。具体的なライブラリ選択は実装詳細として扱う。
-
----
 
 ### 17.2 ログ設計の基本方針
 
@@ -1603,25 +1552,21 @@ flowchart TD
 8. 認証情報や秘密情報をログへ出力しない。
 9. 過剰なログ出力によってシステムへ不要な負荷を与えない。
 
----
-
 ### 17.3 ログレベル
 
 ログには重要度を設定する。
 
 基本的には以下のレベルを使用する。
 
-| レベル   | 意味                | 使用例                  |
-| ----- | ----------------- | -------------------- |
-| DEBUG | 詳細なデバッグ情報         | 内部処理、詳細な状態確認         |
-| INFO  | 正常な動作情報           | 起動、停止、通信成功           |
-| WARN  | 注意が必要な状態          | Retry、Queue蓄積、通信一時失敗 |
-| ERROR | 処理に失敗した異常         | センサー異常、通信失敗          |
-| FATAL | Process継続が困難な重大異常 | 初期化失敗など              |
+| レベル | 意味 | 使用例 |
+|---|---|---|
+| DEBUG | 詳細なデバッグ情報 | 内部処理、詳細な状態確認 |
+| INFO | 正常な動作情報 | 起動、停止、通信成功 |
+| WARN | 注意が必要な状態 | Retry、Queue蓄積、通信一時失敗 |
+| ERROR | 処理に失敗した異常 | センサー異常、通信失敗 |
+| FATAL | Process継続が困難な重大異常 | 初期化失敗など |
 
 通常運用時にはINFO以上を基本とし、DEBUGは調査時など必要に応じて有効化する。
-
----
 
 ### 17.4 ログ出力対象
 
@@ -1646,23 +1591,21 @@ flowchart TB
 
 主なログ対象は以下とする。
 
-* Process起動
-* Process停止
-* 初期化
-* DHT11データ取得
-* センサーデータ異常
-* IPC送信
-* IPC受信
-* Queue Full
-* 通信開始
-* 通信成功
-* 通信失敗
-* Retry
-* Backoff
-* 復旧
-* Process異常終了
-
----
+- Process起動
+- Process停止
+- 初期化
+- DHT11データ取得
+- センサーデータ異常
+- IPC送信
+- IPC受信
+- Queue Full
+- 通信開始
+- 通信成功
+- 通信失敗
+- Retry
+- Backoff
+- 復旧
+- Process異常終了
 
 ### 17.5 Sensor Processのログ
 
@@ -1672,10 +1615,10 @@ Sensor Processでは、センサー取得処理およびIPCへのデータ送信
 
 Sensor Process起動時には、以下を記録する。
 
-* Process起動
-* 初期化開始
-* 初期化成功
-* 通常処理開始
+- Process起動
+- 初期化開始
+- 初期化成功
+- 通常処理開始
 
 #### 17.5.2 センサー取得
 
@@ -1691,14 +1634,13 @@ DHT11からデータを取得した場合、必要な情報を記録する。
 
 記録対象は以下とする。
 
-* 発生時刻
-* Process
-* 異常種別
-* エラー内容
-* Retry回数
-* 復旧結果
+- 発生時刻
+- Process
+- 異常種別
+- エラー内容
+- 復旧結果
 
----
+DHT11取得失敗時は同一取得周期内でRetryしないため、通信Retry回数とは区別して記録する。
 
 ### 17.6 Communication Processのログ
 
@@ -1706,21 +1648,19 @@ Communication Processでは、IPCから受信したSensorDataの処理およびC
 
 主なログ対象は以下とする。
 
-* Process起動
-* IPC受信
-* HTTP送信
-* HTTP成功
-* HTTP失敗
-* HTTP Status
-* Timeout
-* DNS異常
-* 接続異常
-* Retry
-* Backoff
-* 通信復旧
-* Process停止
-
----
+- Process起動
+- IPC受信
+- HTTP送信
+- HTTP成功
+- HTTP失敗
+- HTTP Status
+- Timeout
+- DNS異常
+- 接続異常
+- Retry
+- Backoff
+- 通信復旧
+- Process停止
 
 ### 17.7 IPCのログ
 
@@ -1728,18 +1668,17 @@ IPC Message Queueについては、すべての送受信を詳細にログ出力
 
 例えば以下をログ対象とする。
 
-| 状態          | ログ            |
-| ----------- | ------------- |
-| 正常送信        | 必要に応じてDEBUG   |
-| 正常受信        | 必要に応じてDEBUG   |
-| Queue Full  | WARN / ERROR  |
-| Queueアクセス失敗 | ERROR         |
-| Queue初期化失敗  | ERROR / FATAL |
-| Queue復旧     | INFO          |
+| 状態 | ログ |
+|---|---|
+| 正常送信 | 必要に応じてDEBUG |
+| 正常受信 | 必要に応じてDEBUG |
+| Queue Full | WARN / ERROR |
+| Queueアクセス失敗 | ERROR |
+| Queue初期化失敗 | ERROR / FATAL |
+| Queue接続成功 | INFO |
+| Queue接続Retry | WARN |
 
 これにより、正常時のログ量を抑えながら、IPC異常を追跡できるようにする。
-
----
 
 ### 17.8 通信ログ
 
@@ -1747,21 +1686,19 @@ Communication Processでは、Cloudflare Workerとの通信結果を追跡でき
 
 基本的には以下の情報を記録する。
 
-| 項目          | 内容                    |
-| ----------- | --------------------- |
-| 発生時刻        | 通信開始または結果の時刻          |
-| Process     | Communication Process |
-| 通信種別        | HTTP POST等            |
-| 結果          | 成功 / 失敗               |
-| HTTP Status | HTTP ResponseのStatus  |
-| Retry回数     | Retryした場合の回数          |
-| Timeout     | Timeout発生有無           |
-| エラー種別       | DNS、接続、HTTP等          |
-| 復旧結果        | 復旧成功 / 失敗             |
+| 項目 | 内容 |
+|---|---|
+| 発生時刻 | 通信開始または結果の時刻 |
+| Process | Communication Process |
+| 通信種別 | HTTP POST等 |
+| 結果 | 成功 / 失敗 |
+| HTTP Status | HTTP ResponseのStatus |
+| Retry回数 | Retryした場合の回数 |
+| Timeout | Timeout発生有無 |
+| エラー種別 | DNS、接続、HTTP等 |
+| 復旧結果 | 復旧成功 / 失敗 |
 
 認証情報、Token、パスワードなどの秘密情報は記録しない。
-
----
 
 ### 17.9 Retryログ
 
@@ -1785,15 +1722,15 @@ flowchart LR
 
 Retryログには、少なくとも以下を含める。
 
-* Retry対象
-* Retry回数
-* Retry理由
-* Backoffの有無
-* Retry結果
+- Retry対象
+- Retry回数
+- Retry理由
+- Backoffの有無
+- Retry結果
+
+HTTP 4xxはRetry対象ではないため、Retryログではなく異常記録として扱う。
 
 これにより、通信障害発生時にRetryがどのように実行されたかを確認できる。
-
----
 
 ### 17.10 復旧ログ
 
@@ -1815,21 +1752,19 @@ Retry
 
 復旧ログには以下を含める。
 
-* 障害種別
-* 復旧方法
-* Retry回数
-* 復旧時刻
-* 復旧結果
+- 障害種別
+- 復旧方法
+- Retry回数
+- 復旧時刻
+- 復旧結果
 
 障害発生ログと復旧ログを確認することで、障害継続時間を把握できるようにする。
-
----
 
 ### 17.11 Process起動・終了ログ
 
 Sensor ProcessおよびCommunication Processでは、起動および終了を記録する。
 
-### 起動時
+#### 起動時
 
 ```text
 Process起動
@@ -1841,7 +1776,7 @@ Process起動
 通常動作開始
 ```
 
-### 正常終了時
+#### 正常終了時
 
 ```text
 通常動作
@@ -1853,13 +1788,11 @@ Shutdown開始
 Process終了
 ```
 
-### 異常終了時
+#### 異常終了時
 
 異常終了した場合は、可能な範囲で異常原因および終了状態を記録する。
 
 Process自体が異常終了してログを出力できない場合は、systemd等のProcess管理機構側から状態を確認できる構成を想定する。
-
----
 
 ### 17.12 ログと状態遷移
 
@@ -1893,8 +1826,6 @@ flowchart LR
 
 重要な状態遷移をログへ記録することで、障害発生時にProcessがどの状態にあったかを確認できる。
 
----
-
 ### 17.13 ログフォーマット
 
 ログは、後から検索および解析しやすい形式とする。
@@ -1920,8 +1851,6 @@ Message
 ```
 
 実際の日時形式、ログ出力先およびフォーマットは実装設計で決定する。
-
----
 
 ### 17.14 ログの相関
 
@@ -1961,22 +1890,18 @@ HTTP応答
 
 識別子にはSensorDataのdata_idを使用する。
 
----
-
 ### 17.15 ログ出力しない情報
 
 セキュリティおよびプライバシーの観点から、以下の情報をログへ出力しない。
 
-* 認証Token
-* API Key
-* パスワード
-* 秘密鍵
-* Cookie等の認証情報
-* 不要な個人情報
+- 認証Token
+- API Key
+- パスワード
+- 秘密鍵
+- Cookie等の認証情報
+- 不要な個人情報
 
 HTTP通信をログへ記録する場合も、Request Headerなどに含まれる秘密情報をそのまま記録しない。
-
----
 
 ### 17.16 ログ量の管理
 
@@ -1990,45 +1915,41 @@ HTTP通信をログへ記録する場合も、Request Headerなどに含まれ�
 
 本システムでは、以下を主な監視対象とする。
 
-| 監視対象                  | 確認内容                  |
-| --------------------- | --------------------- |
-| Sensor Process        | Processが動作しているか       |
-| Communication Process | Processが動作しているか       |
-| DHT11取得               | センサーデータを取得できているか      |
-| IPC Queue             | データが滞留していないか          |
-| Wi-Fi                 | ネットワーク接続状態            |
-| HTTP通信                | Workerへ通信できているか       |
-| Retry                 | Retryが頻発していないか        |
-| Queue Full            | Queueが容量上限に達していないか    |
-| Process Restart       | Processが繰り返し再起動していないか |
-
----
+| 監視対象 | 確認内容 |
+|---|---|
+| Sensor Process | Processが動作しているか |
+| Communication Process | Processが動作しているか |
+| DHT11取得 | センサーデータを取得できているか |
+| IPC Queue | データが滞留していないか |
+| Wi-Fi | ネットワーク接続状態 |
+| HTTP通信 | Workerへ通信できているか |
+| Retry | Retryが頻発していないか |
+| Queue Full | Queueが容量上限に達していないか |
+| Process Restart | Processが繰り返し再起動していないか |
 
 ### 17.18 監視における重要状態
 
 特に以下の状態については、異常の兆候として確認できるようにする。
 
-### Sensor Process
+#### Sensor Process
 
-* センサー取得失敗の増加
-* センサー取得停止
-* Process異常終了
+- センサー取得失敗の増加
+- センサー取得停止
+- Process異常終了
 
-### Communication Process
+#### Communication Process
 
-* HTTP通信失敗の増加
-* Timeoutの増加
-* Retryの増加
-* Workerへの通信停止
-* Process異常終了
+- HTTP通信失敗の増加
+- Timeoutの増加
+- Retryの増加
+- Workerへの通信停止
+- Process異常終了
 
-### IPC
+#### IPC
 
-* Queue滞留
-* Queue Full
-* IPCアクセス異常
-
----
+- Queue滞留
+- Queue Full
+- IPCアクセス異常
 
 ### 17.19 障害解析
 
@@ -2066,29 +1987,25 @@ flowchart TD
 
 の順に確認できる構造とする。
 
----
-
 ### 17.20 ログと障害復旧の関係
 
 16章で定義した障害復旧処理について、発生および復旧をログで追跡できるようにする。
 
-| 障害              | 発生ログ | 復旧ログ |
-| --------------- | ---- | ---- |
-| DHT11取得失敗       | ○    | ○    |
-| センサーデータ異常       | ○    | ○    |
-| IPC異常           | ○    | ○    |
-| Queue Full      | ○    | ○    |
-| Wi-Fi障害         | ○    | ○    |
-| DNS障害           | ○    | ○    |
-| HTTP Timeout    | ○    | ○    |
-| HTTP 4xx        | ○    | -    |
-| HTTP 5xx        | ○    | ○    |
-| Process異常終了     | ○    | ○    |
-| Raspberry Pi再起動 | ○    | ○    |
+| 障害 | 発生ログ | 復旧ログ |
+|---|---|---|
+| DHT11取得失敗 | ○ | ○ |
+| センサーデータ異常 | ○ | ○ |
+| IPC異常 | ○ | ○ |
+| Queue Full | ○ | ○ |
+| Wi-Fi障害 | ○ | ○ |
+| DNS障害 | ○ | ○ |
+| HTTP Timeout | ○ | ○ |
+| HTTP 4xx | ○ | - |
+| HTTP 5xx | ○ | ○ |
+| Process異常終了 | ○ | ○ |
+| Raspberry Pi再起動 | ○ | ○ |
 
 これにより、障害が発生しただけでなく、その後に正常復帰したかを確認できる。
-
----
 
 ### 17.21 ログ・監視設計の基本構成
 
@@ -2114,8 +2031,6 @@ flowchart TB
 
 Sensor Process、Communication Process、IPCおよびsystemdなどの状態をログから確認できる構成とする。
 
----
-
 ### 17.22 本章で決定した基本方針
 
 本システムのログ・監視について、以下を基本方針とする。
@@ -2135,34 +2050,34 @@ Sensor Process、Communication Process、IPCおよびsystemdなどの状態を�
 
 ---
 
+## 18. Lifecycle設計
+
 ### 18.1 目的
 
 本章では、本システムの起動から通常運転、ShutdownおよびProcess終了までのLifecycleを定義する。
 
 対象とするLifecycleは以下とする。
 
-* Raspberry Pi起動
-* Edge Application Process起動
-* Process初期化
-* IPC Message Queue初期化
-* Sensor Process起動
-* Communication Process起動
-* 通常運転
-* Shutdown開始
-* Sensor Process停止
-* Communication Process停止
-* IPC解放
-* Process終了
+- Raspberry Pi起動
+- Edge Application Process起動
+- Process初期化
+- IPC Message Queue初期化
+- Sensor Process起動
+- Communication Process起動
+- 通常運転
+- Shutdown開始
+- Sensor Process停止
+- Communication Process停止
+- IPC解放
+- Process終了
 
 また、Process異常終了時やRaspberry Pi再起動時の基本的なLifecycleについても定義する。
-
----
 
 ### 18.2 Lifecycleの基本方針
 
 本システムでは、以下のLifecycleを基本とする。
 
-```mermaid id="6w4r8p"
+```mermaid
 flowchart LR
     Boot["Raspberry Pi起動"]
     Systemd["systemd"]
@@ -2186,13 +2101,11 @@ flowchart LR
 
 Lifecycleでは、各状態において必要なリソースを適切に初期化および解放する。
 
----
-
 ### 18.3 Process Lifecycle
 
 Sensor ProcessおよびCommunication Processは、以下の状態を基本とする。
 
-```mermaid id="e8a1c9"
+```mermaid
 stateDiagram-v2
     [*] --> INIT
     INIT --> READY
@@ -2206,18 +2119,16 @@ stateDiagram-v2
     ERROR --> STOPPING
 ```
 
-### 状態の意味
+#### 状態の意味
 
-| 状態       | 内容                   |
-| -------- | -------------------- |
-| INIT     | Process起動後の初期化中      |
-| READY    | 初期化完了し、通常処理開始可能      |
-| RUNNING  | 通常処理中                |
-| STOPPING | Shutdown処理中          |
-| STOPPED  | Process停止完了          |
-| ERROR    | Processとして継続が困難な異常状態 |
-
----
+| 状態 | 内容 |
+|---|---|
+| INIT | Process起動後の初期化中 |
+| READY | 初期化完了し、通常処理開始可能 |
+| RUNNING | 通常処理中 |
+| STOPPING | Shutdown処理中 |
+| STOPPED | Process停止完了 |
+| ERROR | Processとして継続が困難な異常状態 |
 
 ### 18.4 起動処理
 
@@ -2225,7 +2136,7 @@ Raspberry Pi起動後、systemdによって必要なProcessを起動する。
 
 基本的な流れを以下に示す。
 
-```mermaid id="7k4v9m"
+```mermaid
 sequenceDiagram
     participant OS as Raspberry Pi OS
     participant SD as systemd
@@ -2240,16 +2151,16 @@ sequenceDiagram
     S->>S: 初期化
     C->>C: 初期化
 
-    S->>Q: IPC利用開始
-    C->>Q: IPC利用開始
+    S->>Q: Queue生成・利用開始
+    C->>Q: 既存Queueへ接続
 
     S->>S: 通常処理開始
     C->>C: 通常処理開始
 ```
 
-具体的なsystemd Unit設定および起動順序については、19章「systemd設計」で定義する。
+具体的なsystemd Unit設定および起動条件については、systemd設計で定義する。
 
----
+Sensor ProcessがQueueを生成し、Communication Processは生成済みQueueへの接続を行う。
 
 ### 18.5 Sensor Process起動
 
@@ -2262,7 +2173,7 @@ Process起動
     ↓
 Sensor関連リソース初期化
     ↓
-IPC初期化・利用準備
+IPC Message Queue生成・利用準備
     ↓
 状態をREADYへ変更
     ↓
@@ -2273,8 +2184,6 @@ Sensor Processは、初期化が完了するまでセンサーデータ取得を
 
 初期化に失敗した場合は、ERROR状態として扱う。
 
----
-
 ### 18.6 Communication Process起動
 
 Communication Process起動時には、以下の処理を行う。
@@ -2284,7 +2193,7 @@ Process起動
     ↓
 設定初期化
     ↓
-IPC初期化・利用準備
+既存IPC Message Queueへの接続
     ↓
 通信関連リソース初期化
     ↓
@@ -2295,15 +2204,15 @@ IPC初期化・利用準備
 
 Communication Processは、IPCからSensorDataを受信できる状態になってから通常処理へ移行する。
 
-Cloudflare Workerへの実際の通信は、送信対象データを受信した時点で開始する。
+起動時にQueueが存在しない場合は、Queueの生成を行わず、既存Queueへの接続を再試行する。
 
----
+Cloudflare Workerへの実際の通信は、送信対象データを受信した時点で開始する。
 
 ### 18.7 IPC Message Queue初期化
 
 Sensor ProcessとCommunication Processは、IPC Message Queueを介してSensorDataを受け渡す。
 
-```mermaid id="k0q7zj"
+```mermaid
 flowchart LR
     Sensor["Sensor Process"]
     Queue["IPC Message Queue"]
@@ -2312,26 +2221,24 @@ flowchart LR
     Sensor --> Queue
     Queue --> Comm
 
-    Sensor -->|初期化| Queue
-    Comm -->|初期化| Queue
+    Sensor -->|生成・管理| Queue
+    Comm -->|既存Queueへ接続| Queue
 ```
 
-IPC Message Queueは、両Processが利用可能な状態となってから通常運転へ移行する。
+IPC Message QueueはSensor Processが生成・管理する。
 
-IPCが利用できない場合は、通常運転へ移行せず、IPC異常として処理する。
+Communication Processは既存Queueへ接続する。Queueが存在しない場合は、Queueが生成されるまで接続を再試行する。
 
-具体的なQueue生成、取得、削除および所有方法については、Queue / IPC設計および実装設計で決定する。
-
----
+IPCが利用できない場合は、通常のデータ処理へ移行せず、異常として処理する。
 
 ### 18.8 通常運転開始
 
 Sensor ProcessおよびCommunication Processの初期化が完了すると、通常運転へ移行する。
 
-```mermaid id="x8z2hs"
+```mermaid
 flowchart LR
-    SensorReady["Sensor Process<br/>READY"]
-    CommReady["Communication Process<br/>READY"]
+    SensorReady["Sensor Process READY"]
+    CommReady["Communication Process READY"]
     IPCReady["IPC利用可能"]
     Run["通常運転"]
 
@@ -2358,13 +2265,11 @@ Cloudflare Worker
 
 の処理を継続する。
 
----
-
 ### 18.9 通常運転中の状態
 
 通常運転中、Sensor ProcessとCommunication Processはそれぞれ独立して処理を実行する。
 
-```mermaid id="flow0k"
+```mermaid
 flowchart LR
     Sensor["Sensor Process"]
     Queue["IPC Message Queue"]
@@ -2382,42 +2287,38 @@ Communication ProcessはIPC Message Queueにデータが存在する場合に通
 
 両Processの処理周期は独立している。
 
----
-
 ### 18.10 Shutdown開始
 
 Shutdown要求を受けた場合、通常運転からShutdown状態へ移行する。
 
 Shutdown要求の発生源として以下を想定する。
 
-* ユーザーによる停止操作
-* systemdによる停止
-* Raspberry Piの正常Shutdown
-* 保守作業
+- ユーザーによる停止操作
+- systemdによる停止
+- Raspberry Piの正常Shutdown
+- 保守作業
 
 基本的な流れを以下に示す。
 
-```mermaid id="a3c7n2"
+```mermaid
 flowchart TD
     Run["通常運転"]
     Request["Shutdown要求"]
     StopAcquire["新規センサー取得停止"]
-    QueueHandle["Queue処理"]
-    CommStop["通信処理停止"]
+    StopComm["新規通信処理停止"]
+    Discard["未送信データ破棄"]
     Release["リソース解放"]
     End["Process終了"]
 
     Run --> Request
     Request --> StopAcquire
-    StopAcquire --> QueueHandle
-    QueueHandle --> CommStop
-    CommStop --> Release
+    StopAcquire --> StopComm
+    StopComm --> Discard
+    Discard --> Release
     Release --> End
 ```
 
 Shutdown開始後は、新規の通常処理を開始しない。
-
----
 
 ### 18.11 Sensor ProcessのShutdown
 
@@ -2443,50 +2344,39 @@ STOPPED
 
 Shutdown中に新しいSensorDataを生成し続けないことを基本とする。
 
----
-
 ### 18.12 Communication ProcessのShutdown
 
 Communication Processでは、Shutdown要求を受けた場合、新規通信処理を開始しない。
 
 Shutdown時点でIPC Message Queueに未処理SensorDataが存在する場合、そのデータは永続化せず、Shutdown完了時に破棄する。
 
+通信Retry中に保持しているSensorDataについても、Shutdown時には破棄する。
+
 基本的には以下の考え方とする。
 
-```mermaid id="r2j7mn"
+```mermaid
 flowchart TD
     Shutdown["Shutdown要求"]
     StopNew["新規通信停止"]
-    Queue["Queue確認"]
-    Data{"未処理データあり?"}
-    Process["処理可能なデータを処理"]
-    Discard["残データを終了処理"]
+    StopRetry["Retry処理停止"]
+    Discard["未送信データ破棄"]
     Release["通信リソース解放"]
     End["Process終了"]
 
     Shutdown --> StopNew
-    StopNew --> Queue
-    Queue --> Data
-
-    Data -->|Yes| Process
-    Process --> Queue
-
-    Data -->|No| Release
-    Queue --> Discard
+    StopNew --> StopRetry
+    StopRetry --> Discard
     Discard --> Release
-
     Release --> End
 ```
 
-Queueに残ったデータをShutdown時にすべて送信するか、一定時間のみ処理するか、破棄するかについては、障害復旧およびデータ保持方針と合わせて決定する。
-
----
+Shutdown時にQueueの残データをすべて送信することは保証しない。
 
 ### 18.13 Shutdown時のIPC処理
 
-Shutdown時には、Sensor Processが新規データを生成しない状態になった後、Communication Process側でQueueの残データを扱う。
+Shutdown時には、Sensor Processが新規データを生成しない状態にした後、Communication Processを停止する。
 
-基本的には以下の順序を考慮する。
+基本的には以下の順序とする。
 
 ```text
 Sensor Process
@@ -2497,18 +2387,18 @@ Queueへの新規送信停止
     ↓
 Communication Process
     ↓
-Queue残データ処理
+通信処理停止
     ↓
-通信終了
+未送信データ破棄
     ↓
-IPC解放
+IPC関連リソース解放
+    ↓
+Process終了
 ```
 
 Sensor Processが動作したままCommunication Processを先に停止すると、新しいSensorDataをQueueへ送信できなくなる可能性がある。
 
-そのため、Shutdown順序はProcess間のデータフローを考慮して決定する。
-
----
+そのため、Shutdown順序はProcess間のデータフローを考慮する。
 
 ### 18.14 Shutdown時のデータ扱い
 
@@ -2516,33 +2406,34 @@ Sensor Processが動作したままCommunication Processを先に停止すると
 
 IPC Message QueueおよびCommunication Processが保持している未送信SensorDataは永続化せず、Shutdown完了時に破棄する。
 
+未送信データの送信完了は保証しない。
+
 ### 18.15 正常終了
 
 正常なShutdownでは、以下の状態を満たしてからProcessを終了することを基本とする。
 
-### Sensor Process
+#### Sensor Process
 
-* 新規センサー取得停止
-* 実行中の処理終了
-* IPC処理終了
-* センサー関連リソース解放
-* STOPPED
+- 新規センサー取得停止
+- 実行中の処理終了
+- IPC処理終了
+- センサー関連リソース解放
+- STOPPED
 
-### Communication Process
+#### Communication Process
 
-* 新規通信停止
-* 必要なQueue残データ処理
-* 通信処理終了
-* IPC関連リソース解放
-* STOPPED
-
----
+- 新規通信停止
+- Retry処理停止
+- 未送信SensorData破棄
+- 通信処理終了
+- IPC関連リソース解放
+- STOPPED
 
 ### 18.16 異常終了
 
 Processが正常なShutdown処理を実行できずに終了した場合、異常終了として扱う。
 
-```mermaid id="xq5n7v"
+```mermaid
 flowchart TD
     Run["RUNNING"]
     Abnormal["異常終了"]
@@ -2558,9 +2449,9 @@ flowchart TD
     Init --> RunAgain
 ```
 
-Process異常終了時のRestart条件およびRestart回数については、19章「systemd設計」および障害復旧設計で具体化する。
+Process異常終了時のRestart条件は、systemdのService設定に従う。
 
----
+`Restart=on-failure`、再起動待ち時間は`RestartSec=5`とする。
 
 ### 18.17 Raspberry Pi Shutdown
 
@@ -2568,7 +2459,7 @@ Raspberry Piを正常にShutdownする場合、OSからProcessへ停止要求が
 
 基本的な流れを以下とする。
 
-```mermaid id="t4r8yq"
+```mermaid
 sequenceDiagram
     participant User as 操作者
     participant OS as Raspberry Pi OS
@@ -2582,7 +2473,7 @@ sequenceDiagram
     SD->>C: Stop要求
 
     S->>S: Sensor取得停止
-    C->>C: 通信停止
+    C->>C: 通信停止・未送信データ破棄
 
     S-->>SD: Process終了
     C-->>SD: Process終了
@@ -2591,31 +2482,31 @@ sequenceDiagram
     OS->>OS: Shutdown
 ```
 
-具体的なsystemdの停止順序については19章で定義する。
-
----
+具体的なsystemdの停止順序についてはsystemd設計で定義する。
 
 ### 18.18 起動と停止の関係
 
 起動時と停止時では、データフローを考慮して処理順序を設計する。
 
-### 起動
+#### 起動
 
 ```text
 Raspberry Pi起動
     ↓
 systemd
     ↓
-Process起動
+Sensor Process起動
     ↓
-IPC初期化
+Sensor ProcessによるQueue生成
     ↓
-Sensor / Communication準備完了
+Communication Process起動・Queue接続
+    ↓
+各Process初期化
     ↓
 通常運転
 ```
 
-### 停止
+#### 停止
 
 ```text
 Shutdown要求
@@ -2624,9 +2515,9 @@ Sensor取得停止
     ↓
 新規データ生成停止
     ↓
-Queue残データ処理
+Communication Process停止
     ↓
-通信終了
+未送信データ破棄
     ↓
 IPC解放
     ↓
@@ -2635,13 +2526,11 @@ Process終了
 Raspberry Pi Shutdown
 ```
 
----
-
 ### 18.19 Lifecycleと状態遷移
 
 14章で定義した状態遷移とLifecycleを対応付ける。
 
-```mermaid id="b4j9qk"
+```mermaid
 stateDiagram-v2
     [*] --> INIT
     INIT --> READY
@@ -2673,48 +2562,43 @@ stateDiagram-v2
 
 Lifecycleでは、Processの状態と内部処理状態を分離して扱う。
 
----
-
 ### 18.20 Lifecycle中のログ
 
 Lifecycle上の重要な状態変化はログへ記録する。
 
 主なログ対象を以下に示す。
 
-| Lifecycle  | ログ           |
-| ---------- | ------------ |
-| Process起動  | INFO         |
-| 初期化開始      | INFO         |
-| 初期化失敗      | ERROR        |
-| READY到達    | INFO         |
-| RUNNING開始  | INFO         |
-| Shutdown要求 | INFO         |
-| STOPPING開始 | INFO         |
-| リソース解放     | DEBUG / INFO |
-| STOPPED    | INFO         |
-| 異常終了       | ERROR        |
-| Process再起動 | WARN / INFO  |
+| Lifecycle | ログ |
+|---|---|
+| Process起動 | INFO |
+| 初期化開始 | INFO |
+| 初期化失敗 | ERROR |
+| READY到達 | INFO |
+| RUNNING開始 | INFO |
+| Shutdown要求 | INFO |
+| STOPPING開始 | INFO |
+| リソース解放 | DEBUG / INFO |
+| 未送信データ破棄 | INFO |
+| STOPPED | INFO |
+| 異常終了 | ERROR |
+| Process再起動 | WARN / INFO |
 
 これにより、ProcessがどのLifecycle状態にあるかをログから確認できるようにする。
-
----
 
 ### 18.21 Lifecycle異常
 
 Lifecycle中にも異常が発生する可能性がある。
 
-| 状況           | 基本処理          |
-| ------------ | ------------- |
-| 初期化失敗        | ERROR状態       |
-| IPC初期化失敗     | ERROR状態       |
-| センサー初期化失敗    | ERROR状態       |
-| 通信初期化失敗      | 必要に応じ再初期化     |
-| Shutdown処理失敗 | 異常終了処理        |
-| Process異常終了  | systemd等による復旧 |
+| 状況 | 基本処理 |
+|---|---|
+| 初期化失敗 | ERROR状態 |
+| IPC初期化失敗 | ERROR状態 |
+| センサー初期化失敗 | ERROR状態 |
+| 通信初期化失敗 | 必要に応じ再初期化 |
+| Shutdown処理失敗 | 異常終了処理 |
+| Process異常終了 | systemd等による復旧 |
 
 Lifecycle異常の具体的な復旧方法は障害復旧設計およびsystemd設計で定義する。
-
----
 
 ### 18.22 Lifecycle設計の基本原則
 
@@ -2724,28 +2608,31 @@ Lifecycle異常の具体的な復旧方法は障害復旧設計およびsystemd�
 2. 初期化が完了してから通常処理を開始する。
 3. Sensor ProcessとCommunication Processを独立して管理する。
 4. IPCが利用できる状態で通常運転へ移行する。
-5. Shutdown開始後は新規データ生成を停止する。
-6. Shutdown時のQueue残データを適切に扱う。
-7. 使用したリソースを終了時に解放する。
-8. Process異常終了時は上位のProcess管理機構による復旧を可能とする。
-9. Raspberry Pi再起動後にProcessを自動起動できる構成とする。
-10. Lifecycle上の重要な状態変化をログへ記録する。
-
----
+5. Queueの生成・管理はSensor Processが担当する。
+6. Communication Processは既存Queueへ接続する。
+7. Shutdown開始後は新規データ生成を停止する。
+8. Shutdown時の未送信データは破棄する。
+9. 使用したリソースを終了時に解放する。
+10. Process異常終了時はsystemdによる復旧を可能とする。
+11. Raspberry Pi再起動後にProcessを自動起動できる構成とする。
+12. Lifecycle上の重要な状態変化をログへ記録する。
 
 ### 18.23 本章で決定した基本方針
 
 本章では、以下を基本方針として決定する。
 
-* Raspberry Pi起動後、systemdによって必要なProcessを起動する。
-* Sensor ProcessとCommunication Processは独立したLifecycleを持つ。
-* 各ProcessはINIT → READY → RUNNINGを基本とする。
-* Shutdown時はRUNNING → STOPPING → STOPPEDへ移行する。
-* Sensor ProcessはShutdown開始後に新規センサー取得を停止する。
-* Communication ProcessはShutdown開始後に新規通信を開始しない。
-* Shutdown時のQueue残データについては、データ保持方針と合わせて扱う。
-* Process異常終了時はProcess再起動を復旧手段とする。
-* Raspberry Pi再起動後はProcessを自動起動する。
-* リソースはLifecycleに応じて初期化・解放する。
+- Raspberry Pi起動後、systemdによって必要なProcessを起動する。
+- Sensor ProcessとCommunication Processは独立したLifecycleを持つ。
+- 各ProcessはINIT → READY → RUNNINGを基本とする。
+- Shutdown時はRUNNING → STOPPING → STOPPEDへ移行する。
+- Sensor ProcessはShutdown開始後に新規センサー取得を停止する。
+- Communication ProcessはShutdown開始後に新規通信を開始しない。
+- Shutdown時のQueue残データおよびRetry中のデータは破棄する。
+- IPC Message Queueは揮発性の一時バッファとし、永続化しない。
+- Queueの生成・管理はSensor Processが担当する。
+- Communication Processは既存Queueへ接続する。
+- Process異常終了時はsystemdの`Restart=on-failure`によって再起動する。
+- 再起動待ち時間は`RestartSec=5`とする。
+- Raspberry Pi再起動後はProcessを自動起動する。
+- リソースはLifecycleに応じて初期化・解放する。
 
----
